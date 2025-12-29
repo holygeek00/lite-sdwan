@@ -52,7 +52,7 @@ func (c *Client) SendTelemetry(req *models.TelemetryRequest) error {
 	if err != nil {
 		return fmt.Errorf("failed to send telemetry: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		body, readErr := io.ReadAll(resp.Body)
@@ -80,7 +80,7 @@ func (c *Client) GetRoutes(agentID string) (*models.RouteResponse, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to get routes: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode == http.StatusNotFound {
 		return nil, models.ErrAgentNotFound
@@ -117,7 +117,7 @@ func (c *Client) CheckHealth() error {
 	if err != nil {
 		return fmt.Errorf("health check failed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("health check returned status %d", resp.StatusCode)
