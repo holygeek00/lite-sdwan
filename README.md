@@ -77,8 +77,8 @@
 
 ```bash
 # 下载最新版本
-curl -LO https://github.com/example/lite-sdwan/releases/latest/download/sdwan-controller-linux-amd64
-curl -LO https://github.com/example/lite-sdwan/releases/latest/download/sdwan-agent-linux-amd64
+curl -LO https://github.com/holygeek00/lite-sdwan/releases/latest/download/sdwan-controller-linux-amd64
+curl -LO https://github.com/holygeek00/lite-sdwan/releases/latest/download/sdwan-agent-linux-amd64
 
 # 添加执行权限
 chmod +x sdwan-*
@@ -92,7 +92,7 @@ sudo mv sdwan-agent-linux-amd64 /usr/local/bin/sdwan-agent
 
 ```bash
 # 克隆项目
-git clone https://github.com/example/lite-sdwan.git
+git clone https://github.com/holygeek00/lite-sdwan.git
 cd lite-sdwan
 
 # 编译

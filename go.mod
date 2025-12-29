@@ -1,4 +1,4 @@
-module github.com/example/lite-sdwan
+module github.com/holygeek00/lite-sdwan
 
 go 1.21
 

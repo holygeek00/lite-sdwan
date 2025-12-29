@@ -165,7 +165,7 @@ jobs:
           
           ```bash
           # Download and extract
-          curl -LO https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.VERSION }}/lite-sdwan-linux-amd64.tar.gz
+          curl -LO https://github.com/holygeek00/lite-sdwan/releases/download/${{ steps.version.outputs.VERSION }}/lite-sdwan-linux-amd64.tar.gz
           tar -xzf lite-sdwan-linux-amd64.tar.gz
           
           # Install
@@ -182,7 +182,7 @@ jobs:
           
           ### What's Changed
           
-          See [CHANGELOG.md](https://github.com/${{ github.repository }}/blob/main/CHANGELOG.md) for details.
+          See [CHANGELOG.md](https://github.com/holygeek00/lite-sdwan/blob/main/CHANGELOG.md) for details.
           EOF
 
       - name: Create GitHub Release

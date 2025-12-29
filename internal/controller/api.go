@@ -8,8 +8,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/example/lite-sdwan/pkg/config"
-	"github.com/example/lite-sdwan/pkg/models"
+	"github.com/holygeek00/lite-sdwan/pkg/config"
+	"github.com/holygeek00/lite-sdwan/pkg/models"
 )
 
 // Server Controller HTTP 服务器

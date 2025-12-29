@@ -9,7 +9,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/example/lite-sdwan/pkg/models"
+	"github.com/holygeek00/lite-sdwan/pkg/models"
 )
 
 // Client Controller HTTP 客户端

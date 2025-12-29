@@ -5,7 +5,7 @@ import (
 	"math"
 	"sync"
 
-	"github.com/example/lite-sdwan/pkg/models"
+	"github.com/holygeek00/lite-sdwan/pkg/models"
 )
 
 // RouteSolver 路径计算引擎

@@ -8,7 +8,7 @@ import (
 
 	probing "github.com/go-ping/ping"
 
-	"github.com/example/lite-sdwan/pkg/models"
+	"github.com/holygeek00/lite-sdwan/pkg/models"
 )
 
 // Prober 链路探测器

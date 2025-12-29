@@ -8,8 +8,8 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/example/lite-sdwan/pkg/config"
-	"github.com/example/lite-sdwan/pkg/models"
+	"github.com/holygeek00/lite-sdwan/pkg/config"
+	"github.com/holygeek00/lite-sdwan/pkg/models"
 )
 
 // Agent SD-WAN Agent 主程序

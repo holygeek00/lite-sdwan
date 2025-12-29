@@ -12,7 +12,7 @@
 
 set -e
 
-REPO_URL="https://github.com/your-repo/lite-sdwan"
+REPO_URL="https://github.com/holygeek00/lite-sdwan"
 INSTALL_DIR="/opt/sdwan"
 VERSION="main"
 

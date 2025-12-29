@@ -35,5 +35,5 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Configuration via YAML files
 - Comprehensive documentation
 
-[Unreleased]: https://github.com/example/lite-sdwan/compare/v1.0.0...HEAD
-[1.0.0]: https://github.com/example/lite-sdwan/releases/tag/v1.0.0
+[Unreleased]: https://github.com/holygeek00/lite-sdwan/compare/v1.0.0...HEAD
+[1.0.0]: https://github.com/holygeek00/lite-sdwan/releases/tag/v1.0.0

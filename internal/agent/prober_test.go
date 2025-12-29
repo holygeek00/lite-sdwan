@@ -52,8 +52,8 @@ func TestSlidingWindowAverage(t *testing.T) {
 	}
 
 	expectedLoss := 0.1 // (0 + 0.1 + 0.2) / 3
-	if avgLoss != expectedLoss {
-		t.Errorf("avgLoss = %v, want %v", avgLoss, expectedLoss)
+	if avgLoss < expectedLoss-0.001 || avgLoss > expectedLoss+0.001 {
+		t.Errorf("avgLoss = %v, want ~%v", avgLoss, expectedLoss)
 	}
 }
 

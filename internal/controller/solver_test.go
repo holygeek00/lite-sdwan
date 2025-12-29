@@ -4,7 +4,7 @@ import (
 	"math"
 	"testing"
 
-	"github.com/example/lite-sdwan/pkg/models"
+	"github.com/holygeek00/lite-sdwan/pkg/models"
 )
 
 func TestCalculateCost(t *testing.T) {

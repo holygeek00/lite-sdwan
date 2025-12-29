@@ -6,8 +6,8 @@ import (
 	"log"
 	"os"
 
-	"github.com/example/lite-sdwan/internal/agent"
-	"github.com/example/lite-sdwan/pkg/config"
+	"github.com/holygeek00/lite-sdwan/internal/agent"
+	"github.com/holygeek00/lite-sdwan/pkg/config"
 )
 
 func main() {

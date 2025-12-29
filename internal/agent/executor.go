@@ -8,7 +8,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/example/lite-sdwan/pkg/models"
+	"github.com/holygeek00/lite-sdwan/pkg/models"
 )
 
 // Executor 路由执行器
