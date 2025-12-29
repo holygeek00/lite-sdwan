@@ -1,83 +1,114 @@
 #!/bin/bash
-# Installation script for SD-WAN Controller
-# Usage: sudo ./install-controller.sh
+#
+# SD-WAN Controller 安装脚本 (Go 版本)
+#
+# 用法: sudo ./install-controller.sh
+#
 
 set -e
 
-echo "=== SD-WAN Controller Installation ==="
+INSTALL_DIR="/usr/local/bin"
+CONFIG_DIR="/etc/sdwan"
+SYSTEMD_DIR="/etc/systemd/system"
+GITHUB_REPO="holygeek00/lite-sdwan"
 
-# Check if running as root
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+BLUE='\033[0;34m'
+NC='\033[0m'
+
+log_info() { echo -e "${BLUE}[INFO]${NC} $1"; }
+log_success() { echo -e "${GREEN}[✓]${NC} $1"; }
+log_error() { echo -e "${RED}[✗]${NC} $1"; exit 1; }
+
+echo "=== SD-WAN Controller 安装 (Go 版本) ==="
+echo ""
+
+# 检查 root 权限
 if [ "$EUID" -ne 0 ]; then
-    echo "Error: This script must be run as root"
-    exit 1
+    log_error "请使用 root 权限运行: sudo $0"
 fi
 
-# Check if Python 3 is installed
-if ! command -v python3 &> /dev/null; then
-    echo "Error: Python 3 is not installed. Please install it first."
-    exit 1
-fi
+# 检测架构
+ARCH=$(uname -m)
+case $ARCH in
+    x86_64)  ARCH_SUFFIX="linux-amd64" ;;
+    aarch64) ARCH_SUFFIX="linux-arm64" ;;
+    armv7l)  ARCH_SUFFIX="linux-armv7" ;;
+    *) log_error "不支持的架构: $ARCH" ;;
+esac
 
-# Create directories
-echo "Creating directories..."
-mkdir -p /opt/sdwan
-mkdir -p /etc/sdwan
-mkdir -p /var/log/sdwan
+log_info "架构: $ARCH ($ARCH_SUFFIX)"
 
-# Copy application files
-echo "Copying application files..."
-cp -r agent controller config models.py /opt/sdwan/
+# 创建目录
+log_info "创建目录..."
+mkdir -p "$CONFIG_DIR"
 
-# Install Python dependencies
-echo "Installing Python dependencies..."
-pip3 install -r requirements.txt
-
-# Create dedicated user
-if ! id -u sdwan &> /dev/null; then
-    echo "Creating sdwan user..."
-    useradd -r -s /bin/false sdwan
-fi
-
-# Set ownership
-echo "Setting file ownership..."
-chown -R sdwan:sdwan /opt/sdwan
-chown -R sdwan:sdwan /var/log/sdwan
-
-# Copy configuration template
-if [ ! -f /etc/sdwan/controller_config.yaml ]; then
-    echo "Copying configuration template..."
-    cp config/controller_config.yaml /etc/sdwan/controller_config.yaml
-    chown sdwan:sdwan /etc/sdwan/controller_config.yaml
-    echo "WARNING: Please edit /etc/sdwan/controller_config.yaml if needed"
+# 下载二进制文件
+log_info "下载 sdwan-controller..."
+if curl -sLf "https://github.com/${GITHUB_REPO}/releases/latest/download/sdwan-controller-${ARCH_SUFFIX}" -o "$INSTALL_DIR/sdwan-controller"; then
+    chmod +x "$INSTALL_DIR/sdwan-controller"
+    log_success "下载完成"
 else
-    echo "Configuration file already exists at /etc/sdwan/controller_config.yaml"
+    log_error "下载失败，请检查网络或手动编译"
 fi
 
-# Copy systemd service file
-echo "Installing systemd service..."
-cp systemd/sdwan-controller.service /etc/systemd/system/
+# 复制配置模板
+if [ ! -f "$CONFIG_DIR/controller_config.yaml" ]; then
+    log_info "创建配置模板..."
+    cat > "$CONFIG_DIR/controller_config.yaml" << 'EOF'
+server:
+  listen_address: "0.0.0.0"
+  port: 8000
 
-# Reload systemd
-echo "Reloading systemd..."
+algorithm:
+  penalty_factor: 100
+  hysteresis: 0.15
+
+topology:
+  stale_threshold: 60s
+
+logging:
+  level: "INFO"
+EOF
+    log_success "配置模板已创建: $CONFIG_DIR/controller_config.yaml"
+else
+    log_info "配置文件已存在"
+fi
+
+# 安装 systemd 服务
+log_info "安装 systemd 服务..."
+cat > "$SYSTEMD_DIR/sdwan-controller.service" << EOF
+[Unit]
+Description=SD-WAN Controller
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=$INSTALL_DIR/sdwan-controller -config $CONFIG_DIR/controller_config.yaml
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
 systemctl daemon-reload
-
-# Enable service
-echo "Enabling service..."
 systemctl enable sdwan-controller.service
 
-# Configure firewall (if ufw is installed)
+# 配置防火墙
 if command -v ufw &> /dev/null; then
-    echo "Configuring firewall..."
-    ufw allow 8000/tcp comment "SD-WAN Controller API"
+    log_info "配置防火墙..."
+    ufw allow 8000/tcp comment "SD-WAN Controller API" 2>/dev/null || true
 fi
 
 echo ""
-echo "=== Installation Complete ==="
+echo -e "${GREEN}=== 安装完成 ===${NC}"
 echo ""
-echo "Next steps:"
-echo "1. Review configuration: nano /etc/sdwan/controller_config.yaml"
-echo "2. Start the service: systemctl start sdwan-controller.service"
-echo "3. Check status: systemctl status sdwan-controller.service"
-echo "4. View logs: journalctl -u sdwan-controller.service -f"
-echo "5. Test API: curl http://localhost:8000/health"
+echo "后续步骤:"
+echo "  1. 查看配置: cat $CONFIG_DIR/controller_config.yaml"
+echo "  2. 启动服务: systemctl start sdwan-controller"
+echo "  3. 查看状态: systemctl status sdwan-controller"
+echo "  4. 查看日志: journalctl -u sdwan-controller -f"
+echo "  5. 测试 API: curl http://localhost:8000/health"
 echo ""

@@ -1,11 +1,11 @@
 #!/bin/bash
 #
-# Lite SD-WAN 批量部署脚本
+# Lite SD-WAN 批量部署脚本 (Go 版本)
 #
 # 功能：
 #   - 从本地机器通过 SSH 批量部署到多个节点
 #   - 自动生成所有节点的 WireGuard 配置
-#   - 自动分发配置文件
+#   - 自动分发二进制文件和配置
 #
 # 用法：
 #   ./batch_deploy.sh nodes.yaml
@@ -18,23 +18,24 @@ RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
+CYAN='\033[0;36m'
+BOLD='\033[1m'
 NC='\033[0m'
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 TEMP_DIR="/tmp/sdwan-deploy-$$"
+GITHUB_REPO="holygeek00/lite-sdwan"
 
 log_info() { echo -e "${BLUE}[INFO]${NC} $1"; }
-log_success() { echo -e "${GREEN}[SUCCESS]${NC} $1"; }
-log_warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
-log_error() { echo -e "${RED}[ERROR]${NC} $1"; }
+log_success() { echo -e "${GREEN}[✓]${NC} $1"; }
+log_warn() { echo -e "${YELLOW}[!]${NC} $1"; }
+log_error() { echo -e "${RED}[✗]${NC} $1"; exit 1; }
+log_step() { echo -e "${BOLD}${CYAN}==>${NC} ${BOLD}$1${NC}"; }
 
-#######################################
-# 显示帮助
-#######################################
 show_help() {
     cat << EOF
-Lite SD-WAN 批量部署工具
+Lite SD-WAN 批量部署工具 (Go 版本)
 
 用法: $0 <nodes.yaml>
 
@@ -60,31 +61,28 @@ EOF
     exit 0
 }
 
-#######################################
-# 检查依赖
-#######################################
 check_dependencies() {
-    log_info "检查本地依赖..."
+    log_step "检查本地依赖..."
     
-    for cmd in ssh scp wg python3; do
+    for cmd in ssh scp wg; do
         if ! command -v $cmd &> /dev/null; then
             log_error "缺少依赖: $cmd"
-            exit 1
         fi
     done
+    
+    # 检查 Python 或 yq 用于解析 YAML
+    if ! command -v python3 &> /dev/null && ! command -v yq &> /dev/null; then
+        log_error "需要 python3 或 yq 来解析 YAML 配置"
+    fi
     
     log_success "依赖检查通过"
 }
 
-#######################################
-# 解析 YAML 配置（简单解析）
-#######################################
 parse_config() {
     local config_file="$1"
     
     if [ ! -f "$config_file" ]; then
         log_error "配置文件不存在: $config_file"
-        exit 1
     fi
     
     log_info "解析配置文件: $config_file"
@@ -92,13 +90,11 @@ parse_config() {
     # 使用 Python 解析 YAML
     python3 << EOF
 import yaml
-import json
 import sys
 
 with open('$config_file', 'r') as f:
     config = yaml.safe_load(f)
 
-# 输出为 shell 可读格式
 print(f"CONTROLLER_HOST={config['controller']['host']}")
 print(f"CONTROLLER_SSH_USER={config['controller'].get('ssh_user', 'root')}")
 print(f"CONTROLLER_SSH_PORT={config['controller'].get('ssh_port', 22)}")
@@ -115,11 +111,8 @@ for i, agent in enumerate(agents):
 EOF
 }
 
-#######################################
-# 生成节点密钥
-#######################################
 generate_all_keys() {
-    log_info "生成所有节点的 WireGuard 密钥..."
+    log_step "生成所有节点的 WireGuard 密钥..."
     
     mkdir -p "$TEMP_DIR/keys"
     
@@ -134,11 +127,8 @@ generate_all_keys() {
     log_success "密钥生成完成"
 }
 
-#######################################
-# 生成 WireGuard 配置
-#######################################
 generate_wg_configs() {
-    log_info "生成 WireGuard 配置文件..."
+    log_step "生成 WireGuard 配置文件..."
     
     mkdir -p "$TEMP_DIR/configs"
     
@@ -209,12 +199,8 @@ EOF
     log_success "WireGuard 配置生成完成"
 }
 
-
-#######################################
-# 生成 SD-WAN 配置
-#######################################
 generate_sdwan_configs() {
-    log_info "生成 SD-WAN 配置文件..."
+    log_step "生成 SD-WAN 配置文件..."
     
     # Controller 配置
     cat > "$TEMP_DIR/configs/controller_config.yaml" << EOF
@@ -227,33 +213,27 @@ algorithm:
   hysteresis: 0.15
 
 topology:
-  stale_threshold: 60
+  stale_threshold: 60s
 
 logging:
   level: "INFO"
 EOF
     
     # Controller 的 Agent 配置
-    local peer_ips=""
-    for i in $(seq 0 $((AGENT_COUNT - 1))); do
-        local agent_wg_ip=$(eval echo \$AGENT_${i}_WG_IP)
-        peer_ips="$peer_ips    - \"$agent_wg_ip\"\n"
-    done
-    
     cat > "$TEMP_DIR/configs/controller_agent_config.yaml" << EOF
 agent_id: "$CONTROLLER_WG_IP"
 
 controller:
   url: "http://$CONTROLLER_WG_IP:8000"
-  timeout: 5
+  timeout: 5s
 
 probe:
-  interval: 5
-  timeout: 2
+  interval: 5s
+  timeout: 2s
   window_size: 10
 
 sync:
-  interval: 10
+  interval: 10s
   retry_attempts: 3
   retry_backoff: [1, 2, 4]
 
@@ -261,36 +241,31 @@ network:
   wg_interface: "wg0"
   subnet: "10.254.0.0/24"
   peer_ips:
-$(echo -e "$peer_ips")
 EOF
+    
+    for i in $(seq 0 $((AGENT_COUNT - 1))); do
+        local agent_wg_ip=$(eval echo \$AGENT_${i}_WG_IP)
+        echo "    - \"$agent_wg_ip\"" >> "$TEMP_DIR/configs/controller_agent_config.yaml"
+    done
     
     # 每个 Agent 的配置
     for i in $(seq 0 $((AGENT_COUNT - 1))); do
         local agent_wg_ip=$(eval echo \$AGENT_${i}_WG_IP)
-        
-        # 构建 peer_ips 列表（包括 Controller 和其他 Agent）
-        local peer_ips="    - \"$CONTROLLER_WG_IP\"\n"
-        for j in $(seq 0 $((AGENT_COUNT - 1))); do
-            if [ $i -ne $j ]; then
-                local other_wg_ip=$(eval echo \$AGENT_${j}_WG_IP)
-                peer_ips="$peer_ips    - \"$other_wg_ip\"\n"
-            fi
-        done
         
         cat > "$TEMP_DIR/configs/agent_${i}_config.yaml" << EOF
 agent_id: "$agent_wg_ip"
 
 controller:
   url: "http://$CONTROLLER_WG_IP:8000"
-  timeout: 5
+  timeout: 5s
 
 probe:
-  interval: 5
-  timeout: 2
+  interval: 5s
+  timeout: 2s
   window_size: 10
 
 sync:
-  interval: 10
+  interval: 10s
   retry_attempts: 3
   retry_backoff: [1, 2, 4]
 
@@ -298,16 +273,20 @@ network:
   wg_interface: "wg0"
   subnet: "10.254.0.0/24"
   peer_ips:
-$(echo -e "$peer_ips")
+    - "$CONTROLLER_WG_IP"
 EOF
+        
+        for j in $(seq 0 $((AGENT_COUNT - 1))); do
+            if [ $i -ne $j ]; then
+                local other_wg_ip=$(eval echo \$AGENT_${j}_WG_IP)
+                echo "    - \"$other_wg_ip\"" >> "$TEMP_DIR/configs/agent_${i}_config.yaml"
+            fi
+        done
     done
     
     log_success "SD-WAN 配置生成完成"
 }
 
-#######################################
-# 部署到单个节点
-#######################################
 deploy_to_node() {
     local host="$1"
     local ssh_user="$2"
@@ -319,19 +298,67 @@ deploy_to_node() {
     
     log_info "部署到 $host ($role)..."
     
-    local ssh_opts="-o StrictHostKeyChecking=no -o ConnectTimeout=10 -p $ssh_port"
+    local ssh_opts="-o StrictHostKeyChecking=no -o ConnectTimeout=30 -p $ssh_port"
     local ssh_cmd="ssh $ssh_opts $ssh_user@$host"
-    local scp_cmd="scp $ssh_opts"
+    local scp_cmd="scp -o StrictHostKeyChecking=no -P $ssh_port"
     
-    # 创建远程目录
-    $ssh_cmd "mkdir -p /opt/sdwan /etc/sdwan /etc/wireguard /var/log/sdwan"
+    # 检测远程系统架构
+    local remote_arch=$($ssh_cmd "uname -m")
+    local arch_suffix=""
+    case $remote_arch in
+        x86_64)  arch_suffix="linux-amd64" ;;
+        aarch64) arch_suffix="linux-arm64" ;;
+        armv7l)  arch_suffix="linux-armv7" ;;
+        *) log_error "不支持的架构: $remote_arch" ;;
+    esac
     
-    # 复制项目文件
-    $scp_cmd -r "$PROJECT_DIR/agent" "$ssh_user@$host:/opt/sdwan/"
-    $scp_cmd -r "$PROJECT_DIR/controller" "$ssh_user@$host:/opt/sdwan/"
-    $scp_cmd -r "$PROJECT_DIR/config" "$ssh_user@$host:/opt/sdwan/"
-    $scp_cmd "$PROJECT_DIR/models.py" "$ssh_user@$host:/opt/sdwan/"
-    $scp_cmd "$PROJECT_DIR/requirements.txt" "$ssh_user@$host:/opt/sdwan/"
+    # 远程安装依赖和下载二进制
+    $ssh_cmd << REMOTE_INSTALL
+set -e
+
+# 检测操作系统
+if [ -f /etc/os-release ]; then
+    . /etc/os-release
+    OS=\$ID
+else
+    OS="unknown"
+fi
+
+# 安装依赖
+case \$OS in
+    ubuntu|debian)
+        apt-get update -qq >/dev/null 2>&1
+        apt-get install -y -qq curl wget wireguard wireguard-tools >/dev/null 2>&1
+        ;;
+    centos|rhel|rocky|almalinux)
+        yum install -y epel-release >/dev/null 2>&1 || true
+        yum install -y curl wget wireguard-tools >/dev/null 2>&1
+        ;;
+    fedora)
+        dnf install -y curl wget wireguard-tools >/dev/null 2>&1
+        ;;
+esac
+
+# 创建目录
+mkdir -p /usr/local/bin /etc/sdwan /etc/wireguard
+
+# 下载二进制文件
+echo "下载二进制文件..."
+curl -sLf "https://github.com/${GITHUB_REPO}/releases/latest/download/sdwan-controller-${arch_suffix}" -o /usr/local/bin/sdwan-controller || true
+curl -sLf "https://github.com/${GITHUB_REPO}/releases/latest/download/sdwan-agent-${arch_suffix}" -o /usr/local/bin/sdwan-agent || true
+chmod +x /usr/local/bin/sdwan-controller /usr/local/bin/sdwan-agent 2>/dev/null || true
+
+# 配置内核参数
+cat > /etc/sysctl.d/99-sdwan.conf << 'SYSCTL'
+net.ipv4.ip_forward = 1
+net.ipv4.conf.all.forwarding = 1
+net.ipv4.conf.all.rp_filter = 0
+net.ipv4.conf.default.rp_filter = 0
+SYSCTL
+sysctl -p /etc/sysctl.d/99-sdwan.conf > /dev/null 2>&1
+
+echo "远程安装完成"
+REMOTE_INSTALL
     
     # 复制配置文件
     $scp_cmd "$wg_config" "$ssh_user@$host:/etc/wireguard/wg0.conf"
@@ -341,53 +368,12 @@ deploy_to_node() {
         $scp_cmd "$controller_config" "$ssh_user@$host:/etc/sdwan/controller_config.yaml"
     fi
     
-    # 远程执行安装脚本
-    $ssh_cmd << 'REMOTE_SCRIPT'
-set -e
-
-# 检测操作系统并安装依赖
-if [ -f /etc/os-release ]; then
-    . /etc/os-release
-    case $ID in
-        ubuntu|debian)
-            apt-get update -qq
-            apt-get install -y -qq python3 python3-pip python3-venv wireguard wireguard-tools
-            ;;
-        centos|rhel|rocky|almalinux)
-            dnf install -y epel-release 2>/dev/null || yum install -y epel-release
-            dnf install -y python3 python3-pip wireguard-tools 2>/dev/null || yum install -y python3 python3-pip wireguard-tools
-            ;;
-    esac
-fi
-
-# 创建虚拟环境并安装依赖
-python3 -m venv /opt/sdwan/venv
-source /opt/sdwan/venv/bin/activate
-pip install --upgrade pip -q
-pip install -r /opt/sdwan/requirements.txt -q
-deactivate
-
-# 配置内核参数
-cat > /etc/sysctl.d/99-sdwan.conf << EOF
-net.ipv4.ip_forward = 1
-net.ipv4.conf.all.forwarding = 1
-net.ipv4.conf.all.rp_filter = 0
-net.ipv4.conf.default.rp_filter = 0
-EOF
-sysctl -p /etc/sysctl.d/99-sdwan.conf > /dev/null 2>&1
-
-# 设置 WireGuard 配置权限
-chmod 600 /etc/wireguard/wg0.conf
-
-echo "远程安装完成"
-REMOTE_SCRIPT
+    # 设置权限
+    $ssh_cmd "chmod 600 /etc/wireguard/wg0.conf"
     
-    log_success "文件部署完成: $host"
+    log_success "部署完成: $host"
 }
 
-#######################################
-# 安装 systemd 服务
-#######################################
 install_services_on_node() {
     local host="$1"
     local ssh_user="$2"
@@ -396,21 +382,20 @@ install_services_on_node() {
     
     log_info "安装服务到 $host..."
     
-    local ssh_opts="-o StrictHostKeyChecking=no -o ConnectTimeout=10 -p $ssh_port"
+    local ssh_opts="-o StrictHostKeyChecking=no -o ConnectTimeout=30 -p $ssh_port"
     local ssh_cmd="ssh $ssh_opts $ssh_user@$host"
     
     # Agent 服务
     $ssh_cmd << 'AGENT_SERVICE'
-cat > /etc/systemd/system/sdwan-agent.service << EOF
+cat > /etc/systemd/system/sdwan-agent.service << 'EOF'
 [Unit]
-Description=SD-WAN Agent Service
+Description=SD-WAN Agent
 After=network.target wg-quick@wg0.service
 Wants=wg-quick@wg0.service
 
 [Service]
 Type=simple
-ExecStart=/opt/sdwan/venv/bin/python -m agent.main /etc/sdwan/agent_config.yaml
-WorkingDirectory=/opt/sdwan
+ExecStart=/usr/local/bin/sdwan-agent -config /etc/sdwan/agent_config.yaml
 Restart=always
 RestartSec=5
 
@@ -421,22 +406,14 @@ AGENT_SERVICE
     
     if [ "$role" = "controller" ]; then
         $ssh_cmd << 'CONTROLLER_SERVICE'
-# 创建 sdwan 用户
-id -u sdwan &>/dev/null || useradd -r -s /bin/false sdwan
-chown -R sdwan:sdwan /opt/sdwan
-chown -R sdwan:sdwan /var/log/sdwan
-
-cat > /etc/systemd/system/sdwan-controller.service << EOF
+cat > /etc/systemd/system/sdwan-controller.service << 'EOF'
 [Unit]
-Description=SD-WAN Controller Service
+Description=SD-WAN Controller
 After=network.target
 
 [Service]
 Type=simple
-User=sdwan
-Group=sdwan
-ExecStart=/opt/sdwan/venv/bin/python -m uvicorn controller.api:app --host 0.0.0.0 --port 8000
-WorkingDirectory=/opt/sdwan
+ExecStart=/usr/local/bin/sdwan-controller -config /etc/sdwan/controller_config.yaml
 Restart=always
 RestartSec=5
 
@@ -449,9 +426,6 @@ CONTROLLER_SERVICE
     log_success "服务安装完成: $host"
 }
 
-#######################################
-# 启动所有服务
-#######################################
 start_services_on_node() {
     local host="$1"
     local ssh_user="$2"
@@ -460,13 +434,14 @@ start_services_on_node() {
     
     log_info "启动服务: $host..."
     
-    local ssh_opts="-o StrictHostKeyChecking=no -o ConnectTimeout=10 -p $ssh_port"
+    local ssh_opts="-o StrictHostKeyChecking=no -o ConnectTimeout=30 -p $ssh_port"
     local ssh_cmd="ssh $ssh_opts $ssh_user@$host"
     
     $ssh_cmd << REMOTE_START
+set -e
 systemctl daemon-reload
-systemctl enable wg-quick@wg0
-systemctl start wg-quick@wg0 || wg-quick up wg0
+systemctl enable wg-quick@wg0 2>/dev/null || true
+systemctl start wg-quick@wg0 2>/dev/null || wg-quick up wg0 2>/dev/null || true
 
 if [ "$role" = "controller" ]; then
     systemctl enable sdwan-controller
@@ -481,9 +456,6 @@ REMOTE_START
     log_success "服务启动完成: $host"
 }
 
-#######################################
-# 主函数
-#######################################
 main() {
     local config_file="${1:-}"
     
@@ -492,12 +464,11 @@ main() {
     fi
     
     echo ""
-    echo -e "${BLUE}╔════════════════════════════════════════╗${NC}"
-    echo -e "${BLUE}║   Lite SD-WAN 批量部署工具 v1.0       ║${NC}"
-    echo -e "${BLUE}╚════════════════════════════════════════╝${NC}"
+    echo -e "${CYAN}╔════════════════════════════════════════╗${NC}"
+    echo -e "${CYAN}║   Lite SD-WAN 批量部署 (Go 版本)      ║${NC}"
+    echo -e "${CYAN}╚════════════════════════════════════════╝${NC}"
     echo ""
     
-    # 检查依赖
     check_dependencies
     
     # 解析配置
@@ -538,7 +509,7 @@ main() {
     done
     
     echo ""
-    log_info "启动所有服务..."
+    log_step "启动所有服务..."
     
     # 先启动 Controller
     start_services_on_node "$CONTROLLER_HOST" "$CONTROLLER_SSH_USER" "$CONTROLLER_SSH_PORT" "controller"
@@ -553,18 +524,19 @@ main() {
     done
     
     echo ""
-    echo -e "${GREEN}========================================${NC}"
-    echo -e "${GREEN}       批量部署完成！${NC}"
-    echo -e "${GREEN}========================================${NC}"
+    echo -e "${GREEN}╔════════════════════════════════════════╗${NC}"
+    echo -e "${GREEN}║         批量部署完成！                 ║${NC}"
+    echo -e "${GREEN}╚════════════════════════════════════════╝${NC}"
     echo ""
-    echo "Controller: $CONTROLLER_HOST ($CONTROLLER_WG_IP)"
+    echo -e "${CYAN}节点信息:${NC}"
+    echo "  Controller: $CONTROLLER_HOST ($CONTROLLER_WG_IP)"
     for i in $(seq 0 $((AGENT_COUNT - 1))); do
         local agent_host=$(eval echo \$AGENT_${i}_HOST)
         local agent_wg_ip=$(eval echo \$AGENT_${i}_WG_IP)
-        echo "Agent $((i+1)): $agent_host ($agent_wg_ip)"
+        echo "  Agent $((i+1)): $agent_host ($agent_wg_ip)"
     done
     echo ""
-    echo "验证命令:"
+    echo -e "${CYAN}验证命令:${NC}"
     echo "  curl http://$CONTROLLER_HOST:8000/health"
     echo ""
 }

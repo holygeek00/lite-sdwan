@@ -1,12 +1,19 @@
 #!/bin/bash
 #
-# Lite SD-WAN 一键安装脚本
+# Lite SD-WAN 一键安装脚本 v2.0
 #
 # 用法:
 #   curl -sSL https://raw.githubusercontent.com/holygeek00/lite-sdwan/main/deploy/install.sh | sudo bash
+#   curl -sSL ... | sudo bash -s -- --role controller --wg-ip 10.254.0.1  # 非交互模式
 #
-# 或者:
-#   wget -qO- https://raw.githubusercontent.com/holygeek00/lite-sdwan/main/deploy/install.sh | sudo bash
+# 参数:
+#   --role        节点角色: controller 或 agent
+#   --wg-ip       WireGuard IP 地址
+#   --public-ip   公网 IP 地址
+#   --controller  Controller URL (agent 模式必需)
+#   --peers       对等节点列表，逗号分隔
+#   --skip-wg     跳过 WireGuard 配置
+#   --uninstall   卸载 SD-WAN
 #
 
 set -e
@@ -20,6 +27,16 @@ WG_INTERFACE="wg0"
 WG_PORT=51820
 WG_SUBNET="10.254.0.0/24"
 CONTROLLER_PORT=8000
+VERSION="2.0"
+
+# 命令行参数
+ARG_ROLE=""
+ARG_WG_IP=""
+ARG_PUBLIC_IP=""
+ARG_CONTROLLER=""
+ARG_PEERS=""
+ARG_SKIP_WG=false
+ARG_UNINSTALL=false
 
 # ============== 颜色 ==============
 RED='\033[0;31m'
@@ -27,6 +44,7 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 CYAN='\033[0;36m'
+BOLD='\033[1m'
 NC='\033[0m'
 
 # ============== 函数 ==============
@@ -41,19 +59,102 @@ print_banner() {
                                                         
 EOF
     echo -e "${NC}"
-    echo -e "${BLUE}Lite SD-WAN 一键安装程序 v1.0${NC}"
+    echo -e "${BLUE}Lite SD-WAN 一键安装程序 v${VERSION}${NC}"
+    echo -e "${BLUE}GitHub: https://github.com/${GITHUB_REPO}${NC}"
     echo ""
 }
 
+usage() {
+    echo "用法: $0 [选项]"
+    echo ""
+    echo "选项:"
+    echo "  --role <controller|agent>  节点角色"
+    echo "  --wg-ip <IP>               WireGuard IP 地址"
+    echo "  --public-ip <IP>           公网 IP 地址"
+    echo "  --controller <URL>         Controller URL (agent 模式)"
+    echo "  --peers <peer1,peer2,...>  对等节点 (格式: wg_ip:pub_ip:pubkey)"
+    echo "  --skip-wg                  跳过 WireGuard 配置"
+    echo "  --uninstall                卸载 SD-WAN"
+    echo "  -h, --help                 显示帮助"
+    echo ""
+    echo "示例:"
+    echo "  # 交互式安装"
+    echo "  curl -sSL .../install.sh | sudo bash"
+    echo ""
+    echo "  # Controller 节点"
+    echo "  sudo bash install.sh --role controller --wg-ip 10.254.0.1"
+    echo ""
+    echo "  # Agent 节点"
+    echo "  sudo bash install.sh --role agent --wg-ip 10.254.0.2 --controller http://10.254.0.1:8000"
+    exit 0
+}
+
+parse_args() {
+    while [[ $# -gt 0 ]]; do
+        case $1 in
+            --role) ARG_ROLE="$2"; shift 2 ;;
+            --wg-ip) ARG_WG_IP="$2"; shift 2 ;;
+            --public-ip) ARG_PUBLIC_IP="$2"; shift 2 ;;
+            --controller) ARG_CONTROLLER="$2"; shift 2 ;;
+            --peers) ARG_PEERS="$2"; shift 2 ;;
+            --skip-wg) ARG_SKIP_WG=true; shift ;;
+            --uninstall) ARG_UNINSTALL=true; shift ;;
+            -h|--help) usage ;;
+            *) shift ;;
+        esac
+    done
+}
+
 log_info() { echo -e "${BLUE}[INFO]${NC} $1"; }
-log_success() { echo -e "${GREEN}[OK]${NC} $1"; }
-log_warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
-log_error() { echo -e "${RED}[ERROR]${NC} $1"; exit 1; }
+log_success() { echo -e "${GREEN}[✓]${NC} $1"; }
+log_warn() { echo -e "${YELLOW}[!]${NC} $1"; }
+log_error() { echo -e "${RED}[✗]${NC} $1"; exit 1; }
+log_step() { echo -e "${BOLD}${CYAN}==>${NC} ${BOLD}$1${NC}"; }
+
+spinner() {
+    local pid=$1
+    local delay=0.1
+    local spinstr='|/-\'
+    while ps -p $pid > /dev/null 2>&1; do
+        local temp=${spinstr#?}
+        printf " [%c]  " "$spinstr"
+        local spinstr=$temp${spinstr%"$temp"}
+        sleep $delay
+        printf "\b\b\b\b\b\b"
+    done
+    printf "      \b\b\b\b\b\b"
+}
 
 check_root() {
     if [ "$EUID" -ne 0 ]; then
         log_error "请使用 root 权限运行: sudo $0"
     fi
+}
+
+# 卸载函数
+uninstall() {
+    log_step "卸载 Lite SD-WAN..."
+    
+    # 停止服务
+    systemctl stop sdwan-agent 2>/dev/null || true
+    systemctl stop sdwan-controller 2>/dev/null || true
+    systemctl disable sdwan-agent 2>/dev/null || true
+    systemctl disable sdwan-controller 2>/dev/null || true
+    
+    # 停止 WireGuard
+    wg-quick down $WG_INTERFACE 2>/dev/null || true
+    systemctl disable wg-quick@$WG_INTERFACE 2>/dev/null || true
+    
+    # 删除文件
+    rm -f "$INSTALL_DIR/sdwan-controller" "$INSTALL_DIR/sdwan-agent"
+    rm -rf "$CONFIG_DIR"
+    rm -f "$SYSTEMD_DIR/sdwan-agent.service" "$SYSTEMD_DIR/sdwan-controller.service"
+    rm -f /etc/wireguard/$WG_INTERFACE.conf
+    
+    systemctl daemon-reload
+    
+    log_success "卸载完成"
+    exit 0
 }
 
 detect_os() {
@@ -64,7 +165,7 @@ detect_os() {
     else
         OS="unknown"
     fi
-    log_info "操作系统: $OS $OS_VERSION"
+    log_info "操作系统: ${BOLD}$OS $OS_VERSION${NC}"
 }
 
 detect_arch() {
@@ -75,26 +176,41 @@ detect_arch() {
         armv7l)  ARCH_SUFFIX="linux-armv7" ;;
         *) log_error "不支持的架构: $ARCH" ;;
     esac
-    log_info "系统架构: $ARCH ($ARCH_SUFFIX)"
+    log_info "系统架构: ${BOLD}$ARCH${NC} ($ARCH_SUFFIX)"
+}
+
+check_existing() {
+    if [ -f "$INSTALL_DIR/sdwan-agent" ]; then
+        log_warn "检测到已安装的 SD-WAN"
+        echo ""
+        echo "  1) 重新安装"
+        echo "  2) 卸载"
+        echo "  3) 退出"
+        read -p "选择 [1/2/3]: " choice
+        case $choice in
+            2) uninstall ;;
+            3) exit 0 ;;
+        esac
+    fi
 }
 
 install_deps() {
-    log_info "安装依赖..."
+    log_step "安装系统依赖..."
     
     case $OS in
         ubuntu|debian)
-            apt-get update -qq
-            apt-get install -y -qq curl wget wireguard wireguard-tools
+            apt-get update -qq >/dev/null 2>&1
+            apt-get install -y -qq curl wget wireguard wireguard-tools >/dev/null 2>&1
             ;;
         centos|rhel|rocky|almalinux)
-            yum install -y epel-release 2>/dev/null || true
-            yum install -y curl wget wireguard-tools
+            yum install -y epel-release >/dev/null 2>&1 || true
+            yum install -y curl wget wireguard-tools >/dev/null 2>&1
             ;;
         fedora)
-            dnf install -y curl wget wireguard-tools
+            dnf install -y curl wget wireguard-tools >/dev/null 2>&1
             ;;
         arch|manjaro)
-            pacman -Sy --noconfirm curl wget wireguard-tools
+            pacman -Sy --noconfirm curl wget wireguard-tools >/dev/null 2>&1
             ;;
         *)
             log_warn "未知系统，请确保已安装 curl, wget, wireguard-tools"
@@ -105,25 +221,30 @@ install_deps() {
 }
 
 get_latest_version() {
-    log_info "获取最新版本..."
-    LATEST_VERSION=$(curl -sL "https://api.github.com/repos/${GITHUB_REPO}/releases/latest" | grep '"tag_name"' | sed -E 's/.*"([^"]+)".*/\1/')
+    log_step "获取最新版本..."
+    LATEST_VERSION=$(curl -sL "https://api.github.com/repos/${GITHUB_REPO}/releases/latest" 2>/dev/null | grep '"tag_name"' | sed -E 's/.*"([^"]+)".*/\1/')
     
     if [ -z "$LATEST_VERSION" ]; then
         log_warn "无法获取最新版本，使用 main 分支"
         LATEST_VERSION="main"
     fi
     
-    log_info "版本: $LATEST_VERSION"
+    log_info "版本: ${BOLD}$LATEST_VERSION${NC}"
 }
 
 download_binaries() {
-    log_info "下载二进制文件..."
+    log_step "下载二进制文件..."
     
     local base_url="https://github.com/${GITHUB_REPO}/releases/download/${LATEST_VERSION}"
     
     # 尝试下载预编译版本
+    echo -n "  下载 sdwan-controller... "
     if curl -sLf "${base_url}/sdwan-controller-${ARCH_SUFFIX}" -o /tmp/sdwan-controller 2>/dev/null; then
+        echo -e "${GREEN}完成${NC}"
+        
+        echo -n "  下载 sdwan-agent... "
         curl -sL "${base_url}/sdwan-agent-${ARCH_SUFFIX}" -o /tmp/sdwan-agent
+        echo -e "${GREEN}完成${NC}"
         
         mv /tmp/sdwan-controller "$INSTALL_DIR/sdwan-controller"
         mv /tmp/sdwan-agent "$INSTALL_DIR/sdwan-agent"
@@ -131,38 +252,59 @@ download_binaries() {
         
         log_success "二进制文件下载完成"
     else
+        echo -e "${YELLOW}失败${NC}"
         log_warn "无法下载预编译版本，尝试从源码编译..."
         build_from_source
     fi
 }
 
 build_from_source() {
-    log_info "从源码编译..."
+    log_step "从源码编译..."
     
     # 安装 Go
     if ! command -v go &> /dev/null; then
         log_info "安装 Go..."
         case $OS in
-            ubuntu|debian) apt-get install -y -qq golang ;;
-            centos|rhel|rocky|almalinux|fedora) yum install -y golang ;;
-            arch|manjaro) pacman -Sy --noconfirm go ;;
+            ubuntu|debian) apt-get install -y -qq golang >/dev/null 2>&1 ;;
+            centos|rhel|rocky|almalinux|fedora) yum install -y golang >/dev/null 2>&1 ;;
+            arch|manjaro) pacman -Sy --noconfirm go >/dev/null 2>&1 ;;
+        esac
+    fi
+    
+    # 安装 git
+    if ! command -v git &> /dev/null; then
+        log_info "安装 git..."
+        case $OS in
+            ubuntu|debian) apt-get install -y -qq git >/dev/null 2>&1 ;;
+            centos|rhel|rocky|almalinux|fedora) yum install -y git >/dev/null 2>&1 ;;
+            arch|manjaro) pacman -Sy --noconfirm git >/dev/null 2>&1 ;;
         esac
     fi
     
     # 克隆并编译
     local tmp_dir=$(mktemp -d)
-    git clone --depth 1 "https://github.com/${GITHUB_REPO}.git" "$tmp_dir"
+    log_info "克隆仓库..."
+    git clone --depth 1 "https://github.com/${GITHUB_REPO}.git" "$tmp_dir" >/dev/null 2>&1
     cd "$tmp_dir"
     
+    log_info "编译 controller..."
     go build -o "$INSTALL_DIR/sdwan-controller" ./cmd/controller
+    
+    log_info "编译 agent..."
     go build -o "$INSTALL_DIR/sdwan-agent" ./cmd/agent
     
+    cd /
     rm -rf "$tmp_dir"
     log_success "编译完成"
 }
 
 setup_wireguard() {
-    log_info "配置 WireGuard..."
+    if [ "$ARG_SKIP_WG" = true ]; then
+        log_info "跳过 WireGuard 配置"
+        return
+    fi
+    
+    log_step "配置 WireGuard..."
     
     mkdir -p /etc/wireguard
     
@@ -170,13 +312,14 @@ setup_wireguard() {
     if [ ! -f /etc/wireguard/privatekey ]; then
         wg genkey | tee /etc/wireguard/privatekey | wg pubkey > /etc/wireguard/publickey
         chmod 600 /etc/wireguard/privatekey
+        log_success "WireGuard 密钥已生成"
+    else
+        log_info "使用已有的 WireGuard 密钥"
     fi
-    
-    log_success "WireGuard 密钥已生成"
 }
 
 configure_kernel() {
-    log_info "配置内核参数..."
+    log_step "配置内核参数..."
     
     cat > /etc/sysctl.d/99-sdwan.conf << 'EOF'
 net.ipv4.ip_forward = 1
@@ -190,6 +333,50 @@ EOF
 }
 
 interactive_setup() {
+    # 非交互模式：使用命令行参数
+    if [ -n "$ARG_ROLE" ]; then
+        log_info "使用非交互模式..."
+        
+        NODE_ROLE="$ARG_ROLE"
+        NODE_WG_IP="$ARG_WG_IP"
+        NODE_PUBLIC_IP="$ARG_PUBLIC_IP"
+        
+        # 验证必需参数
+        [ -z "$NODE_WG_IP" ] && log_error "非交互模式需要 --wg-ip 参数"
+        
+        # 自动获取公网 IP
+        if [ -z "$NODE_PUBLIC_IP" ]; then
+            NODE_PUBLIC_IP=$(curl -s ifconfig.me 2>/dev/null || curl -s ip.sb 2>/dev/null || echo "")
+        fi
+        
+        # Controller URL
+        if [ "$NODE_ROLE" = "agent" ]; then
+            [ -z "$ARG_CONTROLLER" ] && log_error "Agent 模式需要 --controller 参数"
+            CONTROLLER_URL="$ARG_CONTROLLER"
+        else
+            CONTROLLER_URL="http://${NODE_WG_IP}:${CONTROLLER_PORT}"
+        fi
+        
+        # 解析对等节点
+        PEERS=()
+        PEER_IPS=()
+        if [ -n "$ARG_PEERS" ]; then
+            IFS=',' read -ra peer_list <<< "$ARG_PEERS"
+            for peer in "${peer_list[@]}"; do
+                PEERS+=("$peer")
+                IFS=':' read -r peer_wg_ip _ _ <<< "$peer"
+                PEER_IPS+=("$peer_wg_ip")
+            done
+        fi
+        
+        log_info "角色: $NODE_ROLE"
+        log_info "WireGuard IP: $NODE_WG_IP"
+        log_info "公网 IP: $NODE_PUBLIC_IP"
+        log_info "Controller: $CONTROLLER_URL"
+        return
+    fi
+    
+    # 交互模式
     echo ""
     echo -e "${CYAN}========================================${NC}"
     echo -e "${CYAN}       节点配置向导${NC}"
@@ -423,10 +610,25 @@ show_result() {
 
 # ============== 主程序 ==============
 main() {
+    # 解析命令行参数
+    parse_args "$@"
+    
+    # 处理卸载
+    if [ "$ARG_UNINSTALL" = true ]; then
+        check_root
+        uninstall
+    fi
+    
     print_banner
     check_root
     detect_os
     detect_arch
+    
+    # 非交互模式跳过已安装检查
+    if [ -z "$ARG_ROLE" ]; then
+        check_existing
+    fi
+    
     install_deps
     get_latest_version
     download_binaries
