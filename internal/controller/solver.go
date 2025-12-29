@@ -107,7 +107,7 @@ func (pq priorityQueue) Swap(i, j int) {
 
 func (pq *priorityQueue) Push(x interface{}) {
 	n := len(*pq)
-	item := x.(*pqItem)
+	item, _ := x.(*pqItem) //nolint:errcheck
 	item.index = n
 	*pq = append(*pq, item)
 }
@@ -147,7 +147,7 @@ func (g *Graph) Dijkstra(source string) *DijkstraResult {
 	visited := make(map[string]bool)
 
 	for pq.Len() > 0 {
-		item := heap.Pop(&pq).(*pqItem)
+		item, _ := heap.Pop(&pq).(*pqItem) //nolint:errcheck
 		u := item.node
 
 		if visited[u] {
