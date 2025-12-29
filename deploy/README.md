@@ -41,16 +41,21 @@ vim deploy/nodes.yaml
 ### 方式三：一行命令安装
 
 ```bash
-curl -sSL https://raw.githubusercontent.com/your-repo/sdwan/main/deploy/quick_install.sh | sudo bash
+# 推荐方式 - 自动下载预编译二进制
+curl -sSL https://raw.githubusercontent.com/holygeek00/lite-sdwan/main/deploy/install.sh | sudo bash
+
+# 或者使用 wget
+wget -qO- https://raw.githubusercontent.com/holygeek00/lite-sdwan/main/deploy/install.sh | sudo bash
 ```
 
 ## 文件说明
 
 | 文件 | 说明 |
 |------|------|
+| `install.sh` | 一键安装脚本（推荐） |
 | `deploy.sh` | 单节点交互式部署脚本 |
 | `batch_deploy.sh` | 批量远程部署脚本 |
-| `quick_install.sh` | 一行命令快速安装脚本 |
+| `quick_install.sh` | 克隆仓库后运行部署 |
 | `nodes.yaml.example` | 批量部署配置模板 |
 
 ## 部署流程

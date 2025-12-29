@@ -106,8 +106,11 @@ ls build/
 ### 方式三：一键部署
 
 ```bash
-# 运行部署向导
-sudo ./deploy/deploy.sh
+# 一行命令安装（推荐）
+curl -sSL https://raw.githubusercontent.com/holygeek00/lite-sdwan/main/deploy/install.sh | sudo bash
+
+# 或者使用 wget
+wget -qO- https://raw.githubusercontent.com/holygeek00/lite-sdwan/main/deploy/install.sh | sudo bash
 ```
 
 ## 配置

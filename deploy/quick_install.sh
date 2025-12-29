@@ -3,11 +3,10 @@
 # Lite SD-WAN 快速安装脚本
 #
 # 一行命令安装:
-#   curl -sSL https://raw.githubusercontent.com/your-repo/sdwan/main/deploy/quick_install.sh | sudo bash
+#   curl -sSL https://raw.githubusercontent.com/holygeek00/lite-sdwan/main/deploy/install.sh | sudo bash
 #
-# 或者下载后运行:
-#   wget -O install.sh https://raw.githubusercontent.com/your-repo/sdwan/main/deploy/quick_install.sh
-#   sudo bash install.sh
+# 或者:
+#   wget -qO- https://raw.githubusercontent.com/holygeek00/lite-sdwan/main/deploy/install.sh | sudo bash
 #
 
 set -e
