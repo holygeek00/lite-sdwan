@@ -26,7 +26,8 @@ linters-settings:
     check-blank: true
   
   govet:
-    check-shadowing: true
+    enable:
+      - shadow
   
   gofmt:
     simplify: true
@@ -41,6 +42,7 @@ linters-settings:
     excludes:
       - G104 # Audit errors not checked
       - G304 # File path provided as taint input
+      - G204 # Subprocess launched with variable - we validate inputs
 
 issues:
   exclude-rules:

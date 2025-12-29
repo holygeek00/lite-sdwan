@@ -2,6 +2,7 @@ package agent
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -16,6 +17,7 @@ import (
 type Client struct {
 	baseURL    string
 	httpClient *http.Client
+	timeout    time.Duration
 }
 
 // NewClient 创建新的客户端
@@ -25,6 +27,7 @@ func NewClient(baseURL string, timeout time.Duration) *Client {
 		httpClient: &http.Client{
 			Timeout: timeout,
 		},
+		timeout: timeout,
 	}
 }
 
@@ -35,15 +38,27 @@ func (c *Client) SendTelemetry(req *models.TelemetryRequest) error {
 		return fmt.Errorf("failed to marshal telemetry: %w", err)
 	}
 
+	ctx, cancel := context.WithTimeout(context.Background(), c.timeout)
+	defer cancel()
+
 	url := c.baseURL + "/api/v1/telemetry"
-	resp, err := c.httpClient.Post(url, "application/json", bytes.NewReader(data))
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(data))
+	if err != nil {
+		return fmt.Errorf("failed to create request: %w", err)
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.httpClient.Do(httpReq)
 	if err != nil {
 		return fmt.Errorf("failed to send telemetry: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
+		body, readErr := io.ReadAll(resp.Body)
+		if readErr != nil {
+			return fmt.Errorf("telemetry request failed with status %d", resp.StatusCode)
+		}
 		return fmt.Errorf("telemetry request failed with status %d: %s", resp.StatusCode, string(body))
 	}
 
@@ -52,8 +67,16 @@ func (c *Client) SendTelemetry(req *models.TelemetryRequest) error {
 
 // GetRoutes 获取路由配置
 func (c *Client) GetRoutes(agentID string) (*models.RouteResponse, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), c.timeout)
+	defer cancel()
+
 	url := fmt.Sprintf("%s/api/v1/routes?agent_id=%s", c.baseURL, agentID)
-	resp, err := c.httpClient.Get(url)
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	resp, err := c.httpClient.Do(httpReq)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get routes: %w", err)
 	}
@@ -64,7 +87,10 @@ func (c *Client) GetRoutes(agentID string) (*models.RouteResponse, error) {
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
+		body, readErr := io.ReadAll(resp.Body)
+		if readErr != nil {
+			return nil, fmt.Errorf("routes request failed with status %d", resp.StatusCode)
+		}
 		return nil, fmt.Errorf("routes request failed with status %d: %s", resp.StatusCode, string(body))
 	}
 
@@ -78,8 +104,16 @@ func (c *Client) GetRoutes(agentID string) (*models.RouteResponse, error) {
 
 // CheckHealth 检查 Controller 健康状态
 func (c *Client) CheckHealth() error {
+	ctx, cancel := context.WithTimeout(context.Background(), c.timeout)
+	defer cancel()
+
 	url := c.baseURL + "/health"
-	resp, err := c.httpClient.Get(url)
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return fmt.Errorf("failed to create request: %w", err)
+	}
+
+	resp, err := c.httpClient.Do(httpReq)
 	if err != nil {
 		return fmt.Errorf("health check failed: %w", err)
 	}

@@ -142,22 +142,22 @@ func (e *Executor) ApplyRoute(route models.RouteConfig) error {
 		return fmt.Errorf("IP %s is not in allowed subnet %s", dstIP, e.subnet.String())
 	}
 
-	var cmd *exec.Cmd
+	var args []string
 	if route.NextHop == "direct" {
 		// 删除中继路由，恢复直连
-		args := e.GenerateDelCommand(dstIP)
-		cmd = exec.Command(args[0], args[1:]...)
+		args = e.GenerateDelCommand(dstIP)
 		log.Printf("Removing relay route: %s", strings.Join(args, " "))
 	} else {
 		// 添加/替换中继路由
 		if !e.ValidateIP(route.NextHop) {
 			return fmt.Errorf("next_hop %s is not in allowed subnet %s", route.NextHop, e.subnet.String())
 		}
-		args := e.GenerateAddCommand(dstIP, route.NextHop)
-		cmd = exec.Command(args[0], args[1:]...)
+		args = e.GenerateAddCommand(dstIP, route.NextHop)
 		log.Printf("Adding relay route: %s", strings.Join(args, " "))
 	}
 
+	// #nosec G204 - args are validated above via ValidateIP
+	cmd := exec.Command(args[0], args[1:]...) //nolint:gosec
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		// 删除不存在的路由不算错误
@@ -242,6 +242,10 @@ func CalculateDiff(current []CurrentRoute, desired []models.RouteConfig) (toAdd,
 			desiredMap[r.DstCIDR] = r.NextHop
 		}
 	}
+
+	// 预分配切片
+	toAdd = make([]models.RouteConfig, 0, len(desiredMap))
+	toRemove = make([]models.RouteConfig, 0, len(currentMap))
 
 	// 需要添加或修改的路由
 	for dst, nextHop := range desiredMap {

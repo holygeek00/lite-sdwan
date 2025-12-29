@@ -19,10 +19,10 @@ type Agent struct {
 	executor *Executor
 	client   *RetryClient
 
-	mu       sync.Mutex
-	running  bool
-	stopCh   chan struct{}
-	wg       sync.WaitGroup
+	mu      sync.Mutex
+	running bool
+	stopCh  chan struct{}
+	wg      sync.WaitGroup
 }
 
 // NewAgent 创建新的 Agent
