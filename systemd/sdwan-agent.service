@@ -1,0 +1,21 @@
+[Unit]
+Description=SD-WAN Agent Service
+After=network.target wg-quick@wg0.service
+Wants=wg-quick@wg0.service
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/sdwan-agent -config /etc/sdwan/agent_config.yaml
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+# Agent 需要 root 权限修改路由表
+# 不设置 User/Group
+
+# 安全设置
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

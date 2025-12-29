@@ -1,0 +1,24 @@
+# SD-WAN Agent 配置文件
+
+agent_id: "10.254.0.1"
+
+controller:
+  url: "http://10.254.0.1:8000"
+  timeout: 5s
+
+probe:
+  interval: 5s
+  timeout: 2s
+  window_size: 10
+
+sync:
+  interval: 10s
+  retry_attempts: 3
+  retry_backoff: [1, 2, 4]
+
+network:
+  wg_interface: "wg0"
+  subnet: "10.254.0.0/24"
+  peer_ips:
+    - "10.254.0.2"
+    - "10.254.0.3"

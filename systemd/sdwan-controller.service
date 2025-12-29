@@ -1,0 +1,22 @@
+[Unit]
+Description=SD-WAN Controller Service
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/sdwan-controller -config /etc/sdwan/controller_config.yaml
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+# 安全设置
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadOnlyPaths=/
+ReadWritePaths=/var/log
+
+[Install]
+WantedBy=multi-user.target

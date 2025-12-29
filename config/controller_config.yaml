@@ -1,0 +1,16 @@
+# SD-WAN Controller 配置文件
+
+server:
+  listen_address: "0.0.0.0"
+  port: 8000
+
+algorithm:
+  penalty_factor: 100
+  hysteresis: 0.15
+
+topology:
+  stale_threshold: 60s
+
+logging:
+  level: "INFO"
+  file: ""
