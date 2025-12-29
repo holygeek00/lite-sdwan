@@ -1,0 +1,256 @@
+name: Build and Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version tag (e.g., v1.0.0)'
+        required: true
+        default: 'v0.0.0-dev'
+
+env:
+  GO_VERSION: '1.21'
+
+jobs:
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          # Linux
+          - goos: linux
+            goarch: amd64
+            suffix: linux-amd64
+          - goos: linux
+            goarch: arm64
+            suffix: linux-arm64
+          - goos: linux
+            goarch: arm
+            goarm: 7
+            suffix: linux-armv7
+          # macOS
+          - goos: darwin
+            goarch: amd64
+            suffix: darwin-amd64
+          - goos: darwin
+            goarch: arm64
+            suffix: darwin-arm64
+          # Windows
+          - goos: windows
+            goarch: amd64
+            suffix: windows-amd64
+            ext: .exe
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Get version
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "VERSION=${{ github.event.inputs.version }}" >> $GITHUB_OUTPUT
+          else
+            echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Build binaries
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          GOARM: ${{ matrix.goarm }}
+          CGO_ENABLED: 0
+        run: |
+          VERSION=${{ steps.version.outputs.VERSION }}
+          BUILD_TIME=$(date -u '+%Y-%m-%d_%H:%M:%S')
+          GIT_COMMIT=${GITHUB_SHA::8}
+          
+          LDFLAGS="-s -w -X main.Version=${VERSION} -X main.BuildTime=${BUILD_TIME} -X main.GitCommit=${GIT_COMMIT}"
+          
+          # Build controller
+          go build -ldflags "${LDFLAGS}" -o sdwan-controller-${{ matrix.suffix }}${{ matrix.ext }} ./cmd/controller
+          
+          # Build agent
+          go build -ldflags "${LDFLAGS}" -o sdwan-agent-${{ matrix.suffix }}${{ matrix.ext }} ./cmd/agent
+
+      - name: Create checksums
+        run: |
+          sha256sum sdwan-controller-${{ matrix.suffix }}${{ matrix.ext }} > sdwan-controller-${{ matrix.suffix }}${{ matrix.ext }}.sha256
+          sha256sum sdwan-agent-${{ matrix.suffix }}${{ matrix.ext }} > sdwan-agent-${{ matrix.suffix }}${{ matrix.ext }}.sha256
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: binaries-${{ matrix.suffix }}
+          path: |
+            sdwan-controller-${{ matrix.suffix }}${{ matrix.ext }}
+            sdwan-agent-${{ matrix.suffix }}${{ matrix.ext }}
+            *.sha256
+
+  release:
+    name: Release
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Get version
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "VERSION=${{ github.event.inputs.version }}" >> $GITHUB_OUTPUT
+          else
+            echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Create release archive
+        run: |
+          cd artifacts
+          
+          # Create archives for each platform
+          for suffix in linux-amd64 linux-arm64 linux-armv7 darwin-amd64 darwin-arm64; do
+            if [ -f "sdwan-controller-${suffix}" ]; then
+              tar -czvf "lite-sdwan-${suffix}.tar.gz" \
+                "sdwan-controller-${suffix}" \
+                "sdwan-agent-${suffix}" \
+                "sdwan-controller-${suffix}.sha256" \
+                "sdwan-agent-${suffix}.sha256"
+            fi
+          done
+          
+          # Windows zip
+          if [ -f "sdwan-controller-windows-amd64.exe" ]; then
+            zip "lite-sdwan-windows-amd64.zip" \
+              "sdwan-controller-windows-amd64.exe" \
+              "sdwan-agent-windows-amd64.exe" \
+              "sdwan-controller-windows-amd64.exe.sha256" \
+              "sdwan-agent-windows-amd64.exe.sha256"
+          fi
+
+      - name: Generate release notes
+        run: |
+          cat > RELEASE_NOTES.md << 'EOF'
+          ## Lite SD-WAN ${{ steps.version.outputs.VERSION }}
+          
+          ### Downloads
+          
+          | Platform | Architecture | Download |
+          |----------|--------------|----------|
+          | Linux | amd64 | `lite-sdwan-linux-amd64.tar.gz` |
+          | Linux | arm64 | `lite-sdwan-linux-arm64.tar.gz` |
+          | Linux | armv7 | `lite-sdwan-linux-armv7.tar.gz` |
+          | macOS | amd64 (Intel) | `lite-sdwan-darwin-amd64.tar.gz` |
+          | macOS | arm64 (Apple Silicon) | `lite-sdwan-darwin-arm64.tar.gz` |
+          | Windows | amd64 | `lite-sdwan-windows-amd64.zip` |
+          
+          ### Quick Install (Linux)
+          
+          ```bash
+          # Download and extract
+          curl -LO https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.VERSION }}/lite-sdwan-linux-amd64.tar.gz
+          tar -xzf lite-sdwan-linux-amd64.tar.gz
+          
+          # Install
+          sudo mv sdwan-controller-linux-amd64 /usr/local/bin/sdwan-controller
+          sudo mv sdwan-agent-linux-amd64 /usr/local/bin/sdwan-agent
+          ```
+          
+          ### Verify Checksums
+          
+          ```bash
+          sha256sum -c sdwan-controller-linux-amd64.sha256
+          sha256sum -c sdwan-agent-linux-amd64.sha256
+          ```
+          
+          ### What's Changed
+          
+          See [CHANGELOG.md](https://github.com/${{ github.repository }}/blob/main/CHANGELOG.md) for details.
+          EOF
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          name: Lite SD-WAN ${{ steps.version.outputs.VERSION }}
+          body_path: RELEASE_NOTES.md
+          draft: false
+          prerelease: ${{ contains(steps.version.outputs.VERSION, '-') }}
+          files: |
+            artifacts/lite-sdwan-*.tar.gz
+            artifacts/lite-sdwan-*.zip
+            artifacts/sdwan-controller-*
+            artifacts/sdwan-agent-*
+            artifacts/*.sha256
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  docker:
+    name: Docker
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download Linux amd64 artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: binaries-linux-amd64
+          path: artifacts
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Get version
+        id: version
+        run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+
+      - name: Build and push Controller image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile.controller
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository }}/controller:${{ steps.version.outputs.VERSION }}
+            ghcr.io/${{ github.repository }}/controller:latest
+          build-args: |
+            BINARY_PATH=artifacts/sdwan-controller-linux-amd64
+
+      - name: Build and push Agent image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile.agent
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository }}/agent:${{ steps.version.outputs.VERSION }}
+            ghcr.io/${{ github.repository }}/agent:latest
+          build-args: |
+            BINARY_PATH=artifacts/sdwan-agent-linux-amd64

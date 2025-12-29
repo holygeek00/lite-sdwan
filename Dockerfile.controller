@@ -1,0 +1,30 @@
+# Lite SD-WAN Controller Dockerfile
+FROM alpine:3.19
+
+ARG BINARY_PATH=sdwan-controller-linux-amd64
+
+# Install ca-certificates for HTTPS
+RUN apk --no-cache add ca-certificates tzdata
+
+# Create non-root user
+RUN adduser -D -u 1000 sdwan
+
+# Copy binary
+COPY ${BINARY_PATH} /usr/local/bin/sdwan-controller
+RUN chmod +x /usr/local/bin/sdwan-controller
+
+# Create config directory
+RUN mkdir -p /etc/sdwan && chown sdwan:sdwan /etc/sdwan
+
+# Switch to non-root user
+USER sdwan
+
+# Expose API port
+EXPOSE 8000
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+  CMD wget --no-verbose --tries=1 --spider http://localhost:8000/health || exit 1
+
+ENTRYPOINT ["/usr/local/bin/sdwan-controller"]
+CMD ["-config", "/etc/sdwan/controller_config.yaml"]

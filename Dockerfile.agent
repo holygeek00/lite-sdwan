@@ -1,0 +1,21 @@
+# Lite SD-WAN Agent Dockerfile
+FROM alpine:3.19
+
+ARG BINARY_PATH=sdwan-agent-linux-amd64
+
+# Install required packages
+RUN apk --no-cache add ca-certificates tzdata iproute2 iputils
+
+# Copy binary
+COPY ${BINARY_PATH} /usr/local/bin/sdwan-agent
+RUN chmod +x /usr/local/bin/sdwan-agent
+
+# Create config directory
+RUN mkdir -p /etc/sdwan
+
+# Agent needs to run as root for route modifications
+# Network capabilities are required
+# Run with: --cap-add=NET_ADMIN --cap-add=NET_RAW
+
+ENTRYPOINT ["/usr/local/bin/sdwan-agent"]
+CMD ["-config", "/etc/sdwan/agent_config.yaml"]
