@@ -1,143 +1,160 @@
 # Lite SD-WAN 一键部署系统
 
-本目录包含 SD-WAN 系统的自动化部署工具。
+本目录包含 SD-WAN 系统的自动化部署工具。Go 语言实现，编译后为单一二进制文件，无需安装运行时依赖。
 
 ## 部署方式
 
-### 方式一：单节点交互式部署
-
-在每个节点上运行部署脚本，按照向导完成配置：
+### 方式一：一行命令安装（推荐）
 
 ```bash
-# 下载项目
-git clone https://github.com/your-repo/lite-sdwan.git
-cd lite-sdwan
-
-# 运行部署脚本
-sudo ./deploy/deploy.sh
-```
-
-部署向导会引导你完成：
-1. 选择节点角色（Controller 或 Agent）
-2. 配置 WireGuard IP 和公网 IP
-3. 添加对等节点信息
-4. 自动安装依赖和配置服务
-
-### 方式二：批量远程部署
-
-从一台管理机器通过 SSH 批量部署到所有节点：
-
-```bash
-# 1. 复制配置模板
-cp deploy/nodes.yaml.example deploy/nodes.yaml
-
-# 2. 编辑配置文件，填入所有节点信息
-vim deploy/nodes.yaml
-
-# 3. 运行批量部署
-./deploy/batch_deploy.sh deploy/nodes.yaml
-```
-
-### 方式三：一行命令安装
-
-```bash
-# 推荐方式 - 自动下载预编译二进制
+# 自动下载预编译二进制，交互式配置
 curl -sSL https://raw.githubusercontent.com/holygeek00/lite-sdwan/main/deploy/install.sh | sudo bash
 
 # 或者使用 wget
 wget -qO- https://raw.githubusercontent.com/holygeek00/lite-sdwan/main/deploy/install.sh | sudo bash
 ```
 
+脚本会自动：
+1. 检测系统架构 (amd64/arm64/armv7)
+2. 下载预编译二进制文件
+3. 安装 WireGuard
+4. 引导你完成节点配置
+5. 生成配置文件并启动服务
+
+### 方式二：下载预编译二进制
+
+```bash
+# 下载最新版本
+curl -LO https://github.com/holygeek00/lite-sdwan/releases/latest/download/sdwan-controller-linux-amd64
+curl -LO https://github.com/holygeek00/lite-sdwan/releases/latest/download/sdwan-agent-linux-amd64
+
+# 添加执行权限
+chmod +x sdwan-*
+
+# 移动到 PATH
+sudo mv sdwan-controller-linux-amd64 /usr/local/bin/sdwan-controller
+sudo mv sdwan-agent-linux-amd64 /usr/local/bin/sdwan-agent
+```
+
+### 方式三：从源码编译
+
+```bash
+# 克隆项目
+git clone https://github.com/holygeek00/lite-sdwan.git
+cd lite-sdwan
+
+# 编译（需要 Go 1.21+）
+make build
+
+# 二进制文件在 build/ 目录
+ls build/
+# sdwan-controller  sdwan-agent
+```
+
+### 方式四：单节点交互式部署
+
+```bash
+# 克隆项目
+git clone https://github.com/holygeek00/lite-sdwan.git
+cd lite-sdwan
+
+# 运行部署脚本
+sudo ./deploy/deploy.sh
+```
+
 ## 文件说明
 
 | 文件 | 说明 |
 |------|------|
-| `install.sh` | 一键安装脚本（推荐） |
-| `deploy.sh` | 单节点交互式部署脚本 |
+| `install.sh` | 一键安装脚本（推荐，自动下载二进制） |
+| `deploy.sh` | 单节点交互式部署脚本（从源码编译） |
 | `batch_deploy.sh` | 批量远程部署脚本 |
 | `quick_install.sh` | 克隆仓库后运行部署 |
 | `nodes.yaml.example` | 批量部署配置模板 |
 
 ## 部署流程
 
-### 单节点部署流程
-
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                    deploy.sh 执行流程                        │
+│                    install.sh 执行流程                       │
 ├─────────────────────────────────────────────────────────────┤
-│  1. 检测操作系统                                             │
-│  2. 安装系统依赖 (Python, WireGuard)                        │
-│  3. 生成 WireGuard 密钥对                                   │
-│  4. 交互式获取节点配置                                       │
-│  5. 配置内核参数 (IP 转发)                                  │
-│  6. 生成配置文件                                            │
+│  1. 检测操作系统和架构                                       │
+│  2. 安装依赖 (curl, wget, wireguard-tools)                  │
+│  3. 下载预编译二进制文件                                     │
+│     - 如果下载失败，自动从源码编译                           │
+│  4. 生成 WireGuard 密钥对                                   │
+│  5. 交互式配置向导                                          │
+│     - 选择角色 (Controller/Agent)                           │
+│     - 配置 WireGuard IP 和公网 IP                           │
+│     - 添加对等节点信息                                       │
+│  6. 配置内核参数 (IP 转发)                                  │
+│  7. 生成配置文件                                            │
 │     - /etc/wireguard/wg0.conf                              │
 │     - /etc/sdwan/agent_config.yaml                         │
 │     - /etc/sdwan/controller_config.yaml (Controller)       │
-│  7. 配置防火墙                                              │
 │  8. 安装 systemd 服务                                       │
 │  9. 启动服务                                                │
-│ 10. 验证部署                                                │
-└─────────────────────────────────────────────────────────────┘
-```
-
-### 批量部署流程
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│                 batch_deploy.sh 执行流程                     │
-├─────────────────────────────────────────────────────────────┤
-│  1. 解析 nodes.yaml 配置文件                                │
-│  2. 为所有节点生成 WireGuard 密钥                           │
-│  3. 生成所有节点的配置文件                                   │
-│  4. 通过 SSH 部署到每个节点                                 │
-│     - 复制项目文件                                          │
-│     - 安装依赖                                              │
-│     - 配置内核参数                                          │
-│  5. 安装 systemd 服务                                       │
-│  6. 按顺序启动服务                                          │
-│     - 先启动 Controller                                     │
-│     - 再启动所有 Agent                                      │
 └─────────────────────────────────────────────────────────────┘
 ```
 
 ## 配置文件格式
 
-### nodes.yaml
+### Controller 配置 (`/etc/sdwan/controller_config.yaml`)
 
 ```yaml
-# Controller 节点
+server:
+  listen_address: "0.0.0.0"
+  port: 8000
+
+algorithm:
+  penalty_factor: 100    # 丢包惩罚因子
+  hysteresis: 0.15       # 切换阈值 (15%)
+
+topology:
+  stale_threshold: 60s   # 数据过期时间
+
+logging:
+  level: "INFO"
+```
+
+### Agent 配置 (`/etc/sdwan/agent_config.yaml`)
+
+```yaml
+agent_id: "10.254.0.1"
+
 controller:
-  host: 1.2.3.4              # 公网 IP
-  ssh_user: root             # SSH 用户名
-  ssh_port: 22               # SSH 端口
-  wg_ip: 10.254.0.1          # WireGuard 内网 IP
+  url: "http://10.254.0.1:8000"
+  timeout: 5s
 
-# Agent 节点列表
-agents:
-  - host: 5.6.7.8
-    ssh_user: root
-    ssh_port: 22
-    wg_ip: 10.254.0.2
+probe:
+  interval: 5s           # 探测周期
+  timeout: 2s            # 探测超时
+  window_size: 10        # 滑动窗口大小
 
-  - host: 9.10.11.12
-    ssh_user: root
-    ssh_port: 22
-    wg_ip: 10.254.0.3
+sync:
+  interval: 10s          # 同步周期
+  retry_attempts: 3      # 重试次数
+  retry_backoff: [1, 2, 4]
+
+network:
+  wg_interface: "wg0"
+  subnet: "10.254.0.0/24"
+  peer_ips:
+    - "10.254.0.2"
+    - "10.254.0.3"
 ```
 
 ## 前置要求
 
-### 管理机器（批量部署）
-- SSH 客户端
-- Python 3.6+
-- WireGuard 工具 (`wg` 命令)
-
 ### 目标节点
-- Linux 系统（Ubuntu 18.04+, CentOS 7+, Debian 10+）
-- Root SSH 访问权限
+- Linux 系统（Ubuntu 18.04+, CentOS 7+, Debian 10+, Fedora, Arch）
+- Root 权限
 - 公网 IP 或可互相访问的网络
+
+### 支持的架构
+- linux/amd64 (x86_64)
+- linux/arm64 (aarch64)
+- linux/armv7 (树莓派等)
 
 ## 部署后验证
 
@@ -158,10 +175,10 @@ sudo systemctl status sdwan-controller
 ### 测试 API
 ```bash
 # 健康检查
-curl http://<controller-ip>:8000/health
+curl http://localhost:8000/health
 
 # 获取路由
-curl http://<controller-ip>:8000/api/v1/routes?agent_id=10.254.0.2
+curl "http://localhost:8000/api/v1/routes?agent_id=10.254.0.2"
 ```
 
 ### 查看日志
@@ -174,15 +191,6 @@ sudo journalctl -u sdwan-controller -f
 ```
 
 ## 故障排查
-
-### SSH 连接失败
-```bash
-# 检查 SSH 连接
-ssh -v root@<host>
-
-# 确保 SSH 密钥已配置
-ssh-copy-id root@<host>
-```
 
 ### WireGuard 无法启动
 ```bash
@@ -200,6 +208,18 @@ sudo journalctl -u sdwan-agent -n 50
 
 # 检查配置文件
 cat /etc/sdwan/agent_config.yaml
+
+# 手动运行测试
+sudo /usr/local/bin/sdwan-agent -config /etc/sdwan/agent_config.yaml
+```
+
+### 连接 Controller 失败
+```bash
+# 检查 Controller 是否运行
+curl http://<controller-ip>:8000/health
+
+# 检查防火墙
+sudo iptables -L -n | grep 8000
 ```
 
 ## 卸载
@@ -214,14 +234,16 @@ sudo wg-quick down wg0
 sudo systemctl disable wg-quick@wg0
 
 # 删除文件
-sudo rm -rf /opt/sdwan /etc/sdwan
-sudo rm /etc/systemd/system/sdwan-*.service
+sudo rm -f /usr/local/bin/sdwan-controller /usr/local/bin/sdwan-agent
+sudo rm -rf /etc/sdwan
+sudo rm -f /etc/systemd/system/sdwan-*.service
 sudo systemctl daemon-reload
 ```
 
 ## 安全建议
 
-1. **SSH 密钥认证**: 使用 SSH 密钥而非密码
-2. **防火墙**: 仅开放必要端口 (51820/UDP, 8000/TCP)
-3. **网络隔离**: Controller API 应仅在内网访问
-4. **定期更新**: 定期更新系统和依赖包
+1. **防火墙**: 仅开放必要端口
+   - 51820/UDP - WireGuard
+   - 8000/TCP - Controller API（建议仅内网访问）
+2. **网络隔离**: Controller API 应仅在 WireGuard 内网访问
+3. **定期更新**: 关注 GitHub Releases 获取安全更新
