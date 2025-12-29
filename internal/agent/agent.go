@@ -162,8 +162,8 @@ func (a *Agent) syncRoutes() {
 
 	if len(routes.Routes) > 0 {
 		log.Printf("Received %d routes from controller", len(routes.Routes))
-		if err := a.executor.SyncRoutes(routes.Routes); err != nil {
-			log.Printf("Failed to sync routes: %v", err)
+		if syncErr := a.executor.SyncRoutes(routes.Routes); syncErr != nil {
+			log.Printf("Failed to sync routes: %v", syncErr)
 		}
 	}
 }
@@ -173,8 +173,8 @@ func (a *Agent) enterFallback() {
 	a.client.EnterFallback()
 	log.Printf("Entering fallback mode, flushing routes...")
 
-	if err := a.executor.FlushRoutes(); err != nil {
-		log.Printf("Failed to flush routes: %v", err)
+	if flushErr := a.executor.FlushRoutes(); flushErr != nil {
+		log.Printf("Failed to flush routes: %v", flushErr)
 	}
 }
 

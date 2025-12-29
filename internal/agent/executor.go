@@ -218,9 +218,9 @@ func (e *Executor) FlushRoutes() error {
 		}
 
 		// 删除路由
-		delCmd := exec.Command("ip", "route", "del", dst, "dev", e.wgInterface)
-		if err := delCmd.Run(); err != nil {
-			log.Printf("Failed to delete route %s: %v", dst, err)
+		delCmd := exec.Command("ip", "route", "del", dst, "dev", e.wgInterface) //nolint:gosec
+		if delErr := delCmd.Run(); delErr != nil {
+			log.Printf("Failed to delete route %s: %v", dst, delErr)
 		} else {
 			log.Printf("Deleted route: %s", dst)
 		}

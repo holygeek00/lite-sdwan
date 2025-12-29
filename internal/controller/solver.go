@@ -215,7 +215,7 @@ func (s *RouteSolver) ComputeRoutes(db *TopologyDB, sourceAgent string) []models
 		}
 
 		path := result.GetPath(target)
-		if path == nil || len(path) < 2 {
+		if len(path) < 2 {
 			continue // 不可达或就是自己
 		}
 
