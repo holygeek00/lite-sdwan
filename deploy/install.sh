@@ -189,8 +189,22 @@ show_node_info() {
     fi
     
     local public_key=$(cat /etc/wireguard/publickey)
-    local wg_ip=$(grep -oP 'Address = \K[0-9.]+' /etc/wireguard/$WG_INTERFACE.conf 2>/dev/null || echo "未配置")
-    local public_ip=$(curl -s ifconfig.me 2>/dev/null || curl -s ip.sb 2>/dev/null || echo "未知")
+    
+    # 解析 WireGuard IP (兼容不同格式)
+    local wg_ip="未配置"
+    if [ -f /etc/wireguard/$WG_INTERFACE.conf ]; then
+        # 尝试多种解析方式
+        wg_ip=$(grep -E "^Address\s*=" /etc/wireguard/$WG_INTERFACE.conf 2>/dev/null | head -1 | sed 's/.*=\s*//' | sed 's/\/.*$//' | tr -d ' ')
+        [ -z "$wg_ip" ] && wg_ip="未配置"
+    fi
+    
+    # 获取公网 IPv4 地址 (优先 IPv4)
+    local public_ip="未知"
+    public_ip=$(curl -4 -s --connect-timeout 5 ifconfig.me 2>/dev/null) || \
+    public_ip=$(curl -4 -s --connect-timeout 5 ip.sb 2>/dev/null) || \
+    public_ip=$(curl -4 -s --connect-timeout 5 ipinfo.io/ip 2>/dev/null) || \
+    public_ip=$(curl -s --connect-timeout 5 ifconfig.me 2>/dev/null) || \
+    public_ip="未知"
     
     echo ""
     echo -e "${CYAN}═══════════════════════════════════════════${NC}"
@@ -590,9 +604,9 @@ interactive_setup() {
         # 验证必需参数
         [ -z "$NODE_WG_IP" ] && log_error "非交互模式需要 --wg-ip 参数"
         
-        # 自动获取公网 IP
+        # 自动获取公网 IP (优先 IPv4)
         if [ -z "$NODE_PUBLIC_IP" ]; then
-            NODE_PUBLIC_IP=$(curl -s ifconfig.me 2>/dev/null || curl -s ip.sb 2>/dev/null || echo "")
+            NODE_PUBLIC_IP=$(curl -4 -s --connect-timeout 5 ifconfig.me 2>/dev/null || curl -4 -s --connect-timeout 5 ip.sb 2>/dev/null || curl -4 -s --connect-timeout 5 ipinfo.io/ip 2>/dev/null || echo "")
         fi
         
         # Controller URL
@@ -658,8 +672,8 @@ interactive_setup() {
     read -p "本机 WireGuard IP (如 10.254.0.1): " NODE_WG_IP
     [ -z "$NODE_WG_IP" ] && log_error "WireGuard IP 不能为空"
     
-    # 公网 IP
-    DEFAULT_PUBLIC_IP=$(curl -s ifconfig.me 2>/dev/null || curl -s ip.sb 2>/dev/null || echo "")
+    # 公网 IP (优先 IPv4)
+    DEFAULT_PUBLIC_IP=$(curl -4 -s --connect-timeout 5 ifconfig.me 2>/dev/null || curl -4 -s --connect-timeout 5 ip.sb 2>/dev/null || curl -4 -s --connect-timeout 5 ipinfo.io/ip 2>/dev/null || echo "")
     read -p "本机公网 IP [$DEFAULT_PUBLIC_IP]: " NODE_PUBLIC_IP
     NODE_PUBLIC_IP=${NODE_PUBLIC_IP:-$DEFAULT_PUBLIC_IP}
     
