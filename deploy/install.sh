@@ -135,46 +135,91 @@ check_root() {
 uninstall() {
     log_step "卸载 Lite SD-WAN..."
     
-    # 停止服务
-    systemctl stop sdwan-agent 2>/dev/null || true
-    systemctl stop sdwan-controller 2>/dev/null || true
-    systemctl disable sdwan-agent 2>/dev/null || true
-    systemctl disable sdwan-controller 2>/dev/null || true
+    UNAME_S=$(uname -s)
     
-    # 停止 WireGuard
-    wg-quick down $WG_INTERFACE 2>/dev/null || true
-    systemctl disable wg-quick@$WG_INTERFACE 2>/dev/null || true
+    if [ "$UNAME_S" = "Darwin" ]; then
+        # macOS 卸载
+        local LAUNCHD_DIR="/Library/LaunchDaemons"
+        
+        launchctl unload "$LAUNCHD_DIR/com.sdwan.agent.plist" 2>/dev/null || true
+        launchctl unload "$LAUNCHD_DIR/com.sdwan.controller.plist" 2>/dev/null || true
+        
+        rm -f "$LAUNCHD_DIR/com.sdwan.agent.plist"
+        rm -f "$LAUNCHD_DIR/com.sdwan.controller.plist"
+        
+        wg-quick down $WG_INTERFACE 2>/dev/null || true
+    else
+        # Linux 卸载
+        systemctl stop sdwan-agent 2>/dev/null || true
+        systemctl stop sdwan-controller 2>/dev/null || true
+        systemctl disable sdwan-agent 2>/dev/null || true
+        systemctl disable sdwan-controller 2>/dev/null || true
+        
+        wg-quick down $WG_INTERFACE 2>/dev/null || true
+        systemctl disable wg-quick@$WG_INTERFACE 2>/dev/null || true
+        
+        rm -f "$SYSTEMD_DIR/sdwan-agent.service" "$SYSTEMD_DIR/sdwan-controller.service"
+        systemctl daemon-reload
+    fi
     
-    # 删除文件
+    # 通用清理
     rm -f "$INSTALL_DIR/sdwan-controller" "$INSTALL_DIR/sdwan-agent"
     rm -rf "$CONFIG_DIR"
-    rm -f "$SYSTEMD_DIR/sdwan-agent.service" "$SYSTEMD_DIR/sdwan-controller.service"
     rm -f /etc/wireguard/$WG_INTERFACE.conf
-    
-    systemctl daemon-reload
     
     log_success "卸载完成"
     exit 0
 }
 
 detect_os() {
-    if [ -f /etc/os-release ]; then
-        . /etc/os-release
-        OS=$ID
-        OS_VERSION=$VERSION_ID
-    else
-        OS="unknown"
-    fi
+    UNAME_S=$(uname -s)
+    case "$UNAME_S" in
+        Linux)
+            if [ -f /etc/os-release ]; then
+                . /etc/os-release
+                OS=$ID
+                OS_VERSION=$VERSION_ID
+            else
+                OS="linux"
+            fi
+            OS_TYPE="linux"
+            ;;
+        Darwin)
+            OS="macos"
+            OS_VERSION=$(sw_vers -productVersion 2>/dev/null || echo "unknown")
+            OS_TYPE="darwin"
+            ;;
+        *)
+            OS="unknown"
+            OS_TYPE="unknown"
+            ;;
+    esac
     log_info "操作系统: ${BOLD}$OS $OS_VERSION${NC}"
 }
 
 detect_arch() {
     ARCH=$(uname -m)
     case $ARCH in
-        x86_64)  ARCH_SUFFIX="linux-amd64" ;;
-        aarch64) ARCH_SUFFIX="linux-arm64" ;;
-        armv7l)  ARCH_SUFFIX="linux-armv7" ;;
-        *) log_error "不支持的架构: $ARCH" ;;
+        x86_64|amd64)
+            if [ "$OS_TYPE" = "darwin" ]; then
+                ARCH_SUFFIX="darwin-amd64"
+            else
+                ARCH_SUFFIX="linux-amd64"
+            fi
+            ;;
+        aarch64|arm64)
+            if [ "$OS_TYPE" = "darwin" ]; then
+                ARCH_SUFFIX="darwin-arm64"
+            else
+                ARCH_SUFFIX="linux-arm64"
+            fi
+            ;;
+        armv7l)
+            ARCH_SUFFIX="linux-armv7"
+            ;;
+        *)
+            log_error "不支持的架构: $ARCH"
+            ;;
     esac
     log_info "系统架构: ${BOLD}$ARCH${NC} ($ARCH_SUFFIX)"
 }
@@ -211,6 +256,15 @@ install_deps() {
             ;;
         arch|manjaro)
             pacman -Sy --noconfirm curl wget wireguard-tools >/dev/null 2>&1
+            ;;
+        macos)
+            # macOS: 使用 Homebrew
+            if ! command -v brew &> /dev/null; then
+                log_warn "未检测到 Homebrew，请先安装: https://brew.sh"
+                log_info "或手动安装 wireguard-tools: brew install wireguard-tools"
+            else
+                brew install wireguard-tools >/dev/null 2>&1 || true
+            fi
             ;;
         *)
             log_warn "未知系统，请确保已安装 curl, wget, wireguard-tools"
@@ -268,6 +322,7 @@ build_from_source() {
             ubuntu|debian) apt-get install -y -qq golang >/dev/null 2>&1 ;;
             centos|rhel|rocky|almalinux|fedora) yum install -y golang >/dev/null 2>&1 ;;
             arch|manjaro) pacman -Sy --noconfirm go >/dev/null 2>&1 ;;
+            macos) brew install go >/dev/null 2>&1 ;;
         esac
     fi
     
@@ -278,6 +333,7 @@ build_from_source() {
             ubuntu|debian) apt-get install -y -qq git >/dev/null 2>&1 ;;
             centos|rhel|rocky|almalinux|fedora) yum install -y git >/dev/null 2>&1 ;;
             arch|manjaro) pacman -Sy --noconfirm git >/dev/null 2>&1 ;;
+            macos) brew install git >/dev/null 2>&1 ;;
         esac
     fi
     
@@ -321,14 +377,21 @@ setup_wireguard() {
 configure_kernel() {
     log_step "配置内核参数..."
     
-    cat > /etc/sysctl.d/99-sdwan.conf << 'EOF'
+    if [ "$OS_TYPE" = "darwin" ]; then
+        # macOS: 启用 IP 转发
+        sysctl -w net.inet.ip.forwarding=1 > /dev/null 2>&1 || true
+        log_info "macOS IP 转发已启用 (重启后需重新设置)"
+    else
+        # Linux
+        cat > /etc/sysctl.d/99-sdwan.conf << 'EOF'
 net.ipv4.ip_forward = 1
 net.ipv4.conf.all.forwarding = 1
 net.ipv4.conf.all.rp_filter = 0
 net.ipv4.conf.default.rp_filter = 0
 EOF
+        sysctl -p /etc/sysctl.d/99-sdwan.conf > /dev/null 2>&1
+    fi
     
-    sysctl -p /etc/sysctl.d/99-sdwan.conf > /dev/null 2>&1
     log_success "内核参数配置完成"
 }
 
@@ -533,8 +596,76 @@ EOF
 }
 
 install_services() {
-    log_info "安装 systemd 服务..."
+    log_info "安装服务..."
     
+    if [ "$OS_TYPE" = "darwin" ]; then
+        install_launchd_services
+    else
+        install_systemd_services
+    fi
+}
+
+install_launchd_services() {
+    local LAUNCHD_DIR="/Library/LaunchDaemons"
+    
+    # Agent plist
+    cat > "$LAUNCHD_DIR/com.sdwan.agent.plist" << EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.sdwan.agent</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>$INSTALL_DIR/sdwan-agent</string>
+        <string>-config</string>
+        <string>$CONFIG_DIR/agent_config.yaml</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>StandardOutPath</key>
+    <string>/var/log/sdwan-agent.log</string>
+    <key>StandardErrorPath</key>
+    <string>/var/log/sdwan-agent.log</string>
+</dict>
+</plist>
+EOF
+    
+    # Controller plist
+    if [ "$NODE_ROLE" = "controller" ]; then
+        cat > "$LAUNCHD_DIR/com.sdwan.controller.plist" << EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.sdwan.controller</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>$INSTALL_DIR/sdwan-controller</string>
+        <string>-config</string>
+        <string>$CONFIG_DIR/controller_config.yaml</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>StandardOutPath</key>
+    <string>/var/log/sdwan-controller.log</string>
+    <key>StandardErrorPath</key>
+    <string>/var/log/sdwan-controller.log</string>
+</dict>
+</plist>
+EOF
+    fi
+    
+    log_success "launchd 服务安装完成"
+}
+
+install_systemd_services() {
     # Agent 服务
     cat > "$SYSTEMD_DIR/sdwan-agent.service" << EOF
 [Unit]
@@ -571,12 +702,38 @@ EOF
     fi
     
     systemctl daemon-reload
-    log_success "服务安装完成"
+    log_success "systemd 服务安装完成"
 }
 
 start_services() {
     log_info "启动服务..."
     
+    if [ "$OS_TYPE" = "darwin" ]; then
+        start_launchd_services
+    else
+        start_systemd_services
+    fi
+}
+
+start_launchd_services() {
+    local LAUNCHD_DIR="/Library/LaunchDaemons"
+    
+    # WireGuard (macOS 使用 wg-quick 手动启动)
+    wg-quick up $WG_INTERFACE 2>/dev/null || true
+    
+    # Controller
+    if [ "$NODE_ROLE" = "controller" ]; then
+        launchctl load "$LAUNCHD_DIR/com.sdwan.controller.plist" 2>/dev/null || true
+        sleep 2
+    fi
+    
+    # Agent
+    launchctl load "$LAUNCHD_DIR/com.sdwan.agent.plist" 2>/dev/null || true
+    
+    log_success "服务启动完成"
+}
+
+start_systemd_services() {
     # WireGuard
     systemctl enable wg-quick@$WG_INTERFACE 2>/dev/null || true
     systemctl start wg-quick@$WG_INTERFACE 2>/dev/null || wg-quick up $WG_INTERFACE 2>/dev/null || true
@@ -610,11 +767,26 @@ show_result() {
     echo ""
     echo -e "${CYAN}常用命令:${NC}"
     echo "  wg show                           # 查看 WireGuard 状态"
-    echo "  journalctl -u sdwan-agent -f      # 查看 Agent 日志"
-    if [ "$NODE_ROLE" = "controller" ]; then
-        echo "  journalctl -u sdwan-controller -f # 查看 Controller 日志"
-        echo "  curl localhost:$CONTROLLER_PORT/health  # 健康检查"
+    
+    if [ "$OS_TYPE" = "darwin" ]; then
+        echo "  tail -f /var/log/sdwan-agent.log  # 查看 Agent 日志"
+        if [ "$NODE_ROLE" = "controller" ]; then
+            echo "  tail -f /var/log/sdwan-controller.log # 查看 Controller 日志"
+            echo "  curl localhost:$CONTROLLER_PORT/health  # 健康检查"
+        fi
+        echo ""
+        echo -e "${CYAN}服务管理 (macOS):${NC}"
+        echo "  sudo launchctl list | grep sdwan  # 查看服务状态"
+        echo "  sudo launchctl stop com.sdwan.agent  # 停止 Agent"
+        echo "  sudo launchctl start com.sdwan.agent # 启动 Agent"
+    else
+        echo "  journalctl -u sdwan-agent -f      # 查看 Agent 日志"
+        if [ "$NODE_ROLE" = "controller" ]; then
+            echo "  journalctl -u sdwan-controller -f # 查看 Controller 日志"
+            echo "  curl localhost:$CONTROLLER_PORT/health  # 健康检查"
+        fi
     fi
+    
     echo ""
     echo -e "${YELLOW}分享给其他节点:${NC}"
     echo "  $NODE_WG_IP,$NODE_PUBLIC_IP,$public_key"
