@@ -231,12 +231,7 @@ check_existing() {
         echo "  1) 重新安装"
         echo "  2) 卸载"
         echo "  3) 退出"
-        # 确保从终端读取
-        if [ ! -t 0 ] && [ -e /dev/tty ]; then
-            read -p "选择 [1/2/3]: " choice < /dev/tty
-        else
-            read -p "选择 [1/2/3]: " choice
-        fi
+        read -p "选择 [1/2/3]: " choice
         case $choice in
             2) uninstall ;;
             3) exit 0 ;;
@@ -445,12 +440,9 @@ interactive_setup() {
     fi
     
     # 检查是否为管道模式（stdin 不是终端）
-    # 如果是管道模式，尝试从 /dev/tty 读取
+    # tty 重定向已在 main() 中处理，这里只做最后检查
     if [ ! -t 0 ]; then
-        if [ -e /dev/tty ]; then
-            exec < /dev/tty
-        else
-            log_error "交互模式需要终端输入。请使用以下方式之一：
+        log_error "交互模式需要终端输入。请使用以下方式之一：
         
   1) 下载后执行:
      curl -sSL <URL>/install.sh -o /tmp/install.sh
@@ -459,7 +451,6 @@ interactive_setup() {
   2) 非交互模式:
      curl -sSL <URL>/install.sh | sudo bash -s -- --role controller --wg-ip 10.254.0.1
      curl -sSL <URL>/install.sh | sudo bash -s -- --role agent --wg-ip 10.254.0.2 --controller http://10.254.0.1:8000"
-        fi
     fi
     
     # 交互模式
@@ -818,6 +809,11 @@ main() {
     check_root
     detect_os
     detect_arch
+    
+    # 如果是管道模式且需要交互，重定向 stdin 到 /dev/tty
+    if [ -z "$ARG_ROLE" ] && [ ! -t 0 ] && [ -e /dev/tty ]; then
+        exec < /dev/tty
+    fi
     
     # 非交互模式跳过已安装检查
     if [ -z "$ARG_ROLE" ]; then
