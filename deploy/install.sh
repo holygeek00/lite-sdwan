@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# Lite SD-WAN 一键安装脚本 v2.1
+# Lite SD-WAN 一键安装脚本 v2.2
 #
 # 用法:
 #   curl -sSL https://raw.githubusercontent.com/holygeek00/lite-sdwan/main/deploy/install.sh | sudo bash
@@ -29,7 +29,7 @@ WG_INTERFACE="wg0"
 WG_PORT=51820
 WG_SUBNET="10.254.0.0/24"
 CONTROLLER_PORT=8000
-VERSION="2.1"
+VERSION="2.2"
 
 # 命令行参数
 ARG_ROLE=""
@@ -185,18 +185,37 @@ uninstall() {
 # 显示本节点信息
 show_node_info() {
     if [ ! -f /etc/wireguard/publickey ]; then
-        log_error "未找到 WireGuard 配置，请先安装 SD-WAN"
+        log_error "未找到 WireGuard 公钥，请先完成安装"
     fi
     
     local public_key=$(cat /etc/wireguard/publickey)
     
-    # 解析 WireGuard IP (兼容不同格式)
-    local wg_ip="未配置"
+    # 解析 WireGuard IP
+    local wg_ip=""
+    
+    # 方法1: 从 WireGuard 配置文件读取
     if [ -f /etc/wireguard/$WG_INTERFACE.conf ]; then
-        # 尝试多种解析方式
         wg_ip=$(grep -E "^Address\s*=" /etc/wireguard/$WG_INTERFACE.conf 2>/dev/null | head -1 | sed 's/.*=\s*//' | sed 's/\/.*$//' | tr -d ' ')
-        [ -z "$wg_ip" ] && wg_ip="未配置"
     fi
+    
+    # 方法2: 从 Agent 配置文件读取
+    if [ -z "$wg_ip" ]; then
+        if [ -f "$CONFIG_DIR/agent_config.yaml" ]; then
+            wg_ip=$(grep -E "^agent_id:" "$CONFIG_DIR/agent_config.yaml" 2>/dev/null | sed 's/.*:\s*//' | tr -d '"' | tr -d ' ')
+        fi
+    fi
+    
+    # 方法3: 从网络接口获取 (Linux)
+    if [ -z "$wg_ip" ] && command -v ip &> /dev/null; then
+        wg_ip=$(ip -4 addr show $WG_INTERFACE 2>/dev/null | grep -oP 'inet \K[\d.]+' | head -1)
+    fi
+    
+    # 方法4: 从网络接口获取 (macOS)
+    if [ -z "$wg_ip" ] && [ "$(uname -s)" = "Darwin" ]; then
+        wg_ip=$(ifconfig $WG_INTERFACE 2>/dev/null | grep 'inet ' | awk '{print $2}' | head -1)
+    fi
+    
+    [ -z "$wg_ip" ] && wg_ip="未配置"
     
     # 获取公网 IPv4 地址 (优先 IPv4)
     local public_ip="未知"
@@ -219,15 +238,26 @@ show_node_info() {
     echo "  $wg_ip,$public_ip,$public_key"
     echo ""
     
+    # 检查配置文件状态
+    if [ ! -f /etc/wireguard/$WG_INTERFACE.conf ]; then
+        echo -e "${RED}  警告: WireGuard 配置文件不存在！${NC}"
+        echo "  请重新运行安装脚本完成配置"
+        echo ""
+    fi
+    
     # 显示当前对等节点
     echo -e "${CYAN}当前对等节点:${NC}"
-    local peer_count=$(grep -c "^\[Peer\]" /etc/wireguard/$WG_INTERFACE.conf 2>/dev/null || echo "0")
-    if [ "$peer_count" = "0" ]; then
-        echo "  (无)"
+    if [ -f /etc/wireguard/$WG_INTERFACE.conf ]; then
+        local peer_count=$(grep -c "^\[Peer\]" /etc/wireguard/$WG_INTERFACE.conf 2>/dev/null || echo "0")
+        if [ "$peer_count" = "0" ]; then
+            echo "  (无)"
+        else
+            grep -A3 "^\[Peer\]" /etc/wireguard/$WG_INTERFACE.conf 2>/dev/null | grep -E "(PublicKey|Endpoint|AllowedIPs)" | while read line; do
+                echo "  $line"
+            done
+        fi
     else
-        grep -A3 "^\[Peer\]" /etc/wireguard/$WG_INTERFACE.conf 2>/dev/null | grep -E "(PublicKey|Endpoint|AllowedIPs)" | while read line; do
-            echo "  $line"
-        done
+        echo "  (配置文件不存在)"
     fi
     echo ""
 }
@@ -235,7 +265,12 @@ show_node_info() {
 # 添加对等节点
 add_peer() {
     if [ ! -f /etc/wireguard/$WG_INTERFACE.conf ]; then
-        log_error "未找到 WireGuard 配置，请先安装 SD-WAN"
+        log_warn "未找到 WireGuard 配置文件"
+        echo ""
+        echo "请先完成安装配置，然后再添加对等节点"
+        echo "运行: sudo bash install.sh"
+        echo ""
+        exit 1
     fi
     
     echo ""
@@ -316,22 +351,65 @@ EOF
 
 # 管理菜单
 manage_menu() {
+    # 检查配置是否完整
+    local config_incomplete=false
+    local missing_configs=""
+    
+    if [ ! -f /etc/wireguard/$WG_INTERFACE.conf ]; then
+        config_incomplete=true
+        missing_configs="WireGuard配置"
+    fi
+    
+    if [ ! -f "$CONFIG_DIR/agent_config.yaml" ]; then
+        config_incomplete=true
+        if [ -n "$missing_configs" ]; then
+            missing_configs="$missing_configs, Agent配置"
+        else
+            missing_configs="Agent配置"
+        fi
+    fi
+    
     echo ""
     echo -e "${CYAN}═══════════════════════════════════════════${NC}"
     echo -e "${CYAN}  SD-WAN 管理菜单${NC}"
     echo -e "${CYAN}═══════════════════════════════════════════${NC}"
     echo ""
+    
+    if [ "$config_incomplete" = true ]; then
+        echo -e "  ${RED}0) 完成配置 (缺失: $missing_configs)${NC}"
+    fi
+    
     echo "  1) 显示本节点信息"
     echo "  2) 添加对等节点"
     echo "  3) 查看 WireGuard 状态"
     echo "  4) 重启服务"
-    echo "  5) 卸载"
-    echo "  6) 退出"
+    echo "  5) 重新安装"
+    echo "  6) 卸载"
+    echo "  7) 退出"
     echo ""
     
-    read -p "请选择 [1-6]: " choice
+    read -p "请选择 [0-7]: " choice
     
     case $choice in
+        0)
+            if [ "$config_incomplete" = true ]; then
+                # 重新运行配置流程
+                ARG_ROLE=""
+                # 确保 stdin 可用于交互
+                if [ ! -t 0 ] && [ -e /dev/tty ]; then
+                    exec < /dev/tty
+                fi
+                setup_wireguard
+                configure_kernel
+                interactive_setup
+                generate_configs
+                install_services
+                start_services
+                show_result
+            else
+                log_info "配置已完整"
+            fi
+            ;;
         1) show_node_info ;;
         2) add_peer ;;
         3) wg show ;;
@@ -344,8 +422,26 @@ manage_menu() {
             fi
             log_success "服务已重启"
             ;;
-        5) uninstall ;;
-        6) exit 0 ;;
+        5)
+            # 重新安装
+            ARG_ROLE=""
+            # 确保 stdin 可用于交互
+            if [ ! -t 0 ] && [ -e /dev/tty ]; then
+                exec < /dev/tty
+            fi
+            install_deps
+            get_latest_version
+            download_binaries
+            setup_wireguard
+            configure_kernel
+            interactive_setup
+            generate_configs
+            install_services
+            start_services
+            show_result
+            ;;
+        6) uninstall ;;
+        7) exit 0 ;;
         *) log_error "无效选择" ;;
     esac
 }
