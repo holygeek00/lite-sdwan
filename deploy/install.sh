@@ -412,7 +412,28 @@ manage_menu() {
             ;;
         1) show_node_info ;;
         2) add_peer ;;
-        3) wg show ;;
+        3) 
+            echo ""
+            if ! command -v wg &> /dev/null; then
+                log_error "WireGuard 未安装"
+            fi
+            if ! wg show $WG_INTERFACE &> /dev/null; then
+                log_warn "WireGuard 接口 $WG_INTERFACE 未启动"
+                echo ""
+                if [ -f /etc/wireguard/$WG_INTERFACE.conf ]; then
+                    echo "配置文件存在，尝试启动..."
+                    wg-quick up $WG_INTERFACE && log_success "WireGuard 已启动"
+                    echo ""
+                    wg show $WG_INTERFACE
+                else
+                    echo "配置文件不存在: /etc/wireguard/$WG_INTERFACE.conf"
+                    echo "请先完成配置 (选项 0 或 5)"
+                fi
+            else
+                wg show $WG_INTERFACE
+            fi
+            echo ""
+            ;;
         4) 
             if [ "$(uname -s)" = "Darwin" ]; then
                 launchctl stop com.sdwan.agent 2>/dev/null || true
