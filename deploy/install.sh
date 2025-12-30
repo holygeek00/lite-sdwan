@@ -394,32 +394,65 @@ install_deps() {
     
     case $OS in
         ubuntu|debian)
-            apt-get update -qq >/dev/null 2>&1
-            apt-get install -y -qq curl wget wireguard wireguard-tools >/dev/null 2>&1
+            log_info "使用 apt 安装依赖..."
+            apt-get update -qq
+            apt-get install -y curl wget wireguard wireguard-tools
+            if [ $? -ne 0 ]; then
+                log_error "依赖安装失败，请检查网络连接或手动安装: apt install wireguard wireguard-tools"
+            fi
             ;;
         centos|rhel|rocky|almalinux)
-            yum install -y epel-release >/dev/null 2>&1 || true
-            yum install -y curl wget wireguard-tools >/dev/null 2>&1
+            log_info "使用 yum 安装依赖..."
+            yum install -y epel-release || true
+            yum install -y curl wget wireguard-tools
+            if [ $? -ne 0 ]; then
+                log_error "依赖安装失败，请检查网络连接或手动安装: yum install wireguard-tools"
+            fi
             ;;
         fedora)
-            dnf install -y curl wget wireguard-tools >/dev/null 2>&1
+            log_info "使用 dnf 安装依赖..."
+            dnf install -y curl wget wireguard-tools
+            if [ $? -ne 0 ]; then
+                log_error "依赖安装失败，请检查网络连接或手动安装: dnf install wireguard-tools"
+            fi
             ;;
         arch|manjaro)
-            pacman -Sy --noconfirm curl wget wireguard-tools >/dev/null 2>&1
+            log_info "使用 pacman 安装依赖..."
+            pacman -Sy --noconfirm curl wget wireguard-tools
+            if [ $? -ne 0 ]; then
+                log_error "依赖安装失败，请检查网络连接或手动安装: pacman -S wireguard-tools"
+            fi
             ;;
         macos)
             # macOS: 使用 Homebrew
             if ! command -v brew &> /dev/null; then
-                log_warn "未检测到 Homebrew，请先安装: https://brew.sh"
-                log_info "或手动安装 wireguard-tools: brew install wireguard-tools"
+                log_error "未检测到 Homebrew，请先安装: https://brew.sh
+                
+安装 Homebrew:
+  /bin/bash -c \"\$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)\"
+
+然后重新运行此脚本"
+            fi
+            
+            log_info "使用 Homebrew 安装 wireguard-tools..."
+            if ! brew list wireguard-tools &>/dev/null; then
+                brew install wireguard-tools
+                if [ $? -ne 0 ]; then
+                    log_error "WireGuard 安装失败，请手动运行: brew install wireguard-tools"
+                fi
             else
-                brew install wireguard-tools >/dev/null 2>&1 || true
+                log_info "wireguard-tools 已安装"
             fi
             ;;
         *)
             log_warn "未知系统，请确保已安装 curl, wget, wireguard-tools"
             ;;
     esac
+    
+    # 验证 wg 命令是否可用
+    if ! command -v wg &> /dev/null; then
+        log_error "WireGuard 未正确安装，请手动安装 wireguard-tools 后重试"
+    fi
     
     log_success "依赖安装完成"
 }
