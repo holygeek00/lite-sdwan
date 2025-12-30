@@ -393,11 +393,16 @@ manage_menu() {
     case $choice in
         0)
             if [ "$config_incomplete" = true ]; then
+                log_step "开始完成配置..."
                 # 重新运行配置流程
                 ARG_ROLE=""
                 # 确保 stdin 可用于交互
-                if [ ! -t 0 ] && [ -e /dev/tty ]; then
-                    exec < /dev/tty
+                if [ ! -t 0 ]; then
+                    if [ -e /dev/tty ]; then
+                        exec < /dev/tty
+                    else
+                        log_error "无法获取终端输入，请直接运行脚本而不是通过管道"
+                    fi
                 fi
                 setup_wireguard
                 configure_kernel
@@ -444,11 +449,16 @@ manage_menu() {
             log_success "服务已重启"
             ;;
         5)
+            log_step "开始重新安装..."
             # 重新安装
             ARG_ROLE=""
             # 确保 stdin 可用于交互
-            if [ ! -t 0 ] && [ -e /dev/tty ]; then
-                exec < /dev/tty
+            if [ ! -t 0 ]; then
+                if [ -e /dev/tty ]; then
+                    exec < /dev/tty
+                else
+                    log_error "无法获取终端输入，请直接运行脚本而不是通过管道"
+                fi
             fi
             install_deps
             get_latest_version
@@ -754,9 +764,12 @@ interactive_setup() {
     fi
     
     # 检查是否为管道模式（stdin 不是终端）
-    # tty 重定向已在 main() 中处理，这里只做最后检查
+    # 如果 stdin 不是终端，尝试重定向到 /dev/tty
     if [ ! -t 0 ]; then
-        log_error "交互模式需要终端输入。请使用以下方式之一：
+        if [ -e /dev/tty ]; then
+            exec < /dev/tty
+        else
+            log_error "交互模式需要终端输入。请使用以下方式之一：
         
   1) 下载后执行:
      curl -sSL <URL>/install.sh -o /tmp/install.sh
@@ -765,6 +778,7 @@ interactive_setup() {
   2) 非交互模式:
      curl -sSL <URL>/install.sh | sudo bash -s -- --role controller --wg-ip 10.254.0.1
      curl -sSL <URL>/install.sh | sudo bash -s -- --role agent --wg-ip 10.254.0.2 --controller http://10.254.0.1:8000"
+        fi
     fi
     
     # 交互模式
@@ -832,9 +846,24 @@ interactive_setup() {
 }
 
 generate_configs() {
-    log_info "生成配置文件..."
+    log_step "生成配置文件..."
+    
+    # 检查必要变量
+    if [ -z "$NODE_WG_IP" ]; then
+        log_error "NODE_WG_IP 未设置，无法生成配置"
+    fi
+    
+    log_info "NODE_WG_IP: $NODE_WG_IP"
+    log_info "NODE_ROLE: $NODE_ROLE"
+    log_info "CONTROLLER_URL: $CONTROLLER_URL"
     
     mkdir -p "$CONFIG_DIR"
+    mkdir -p /etc/wireguard
+    
+    # 检查私钥是否存在
+    if [ ! -f /etc/wireguard/privatekey ]; then
+        log_error "WireGuard 私钥不存在，请先运行 setup_wireguard"
+    fi
     
     # WireGuard 配置
     local private_key=$(cat /etc/wireguard/privatekey)
@@ -859,6 +888,7 @@ EOF
     done
     
     chmod 600 /etc/wireguard/$WG_INTERFACE.conf
+    log_success "WireGuard 配置已创建: /etc/wireguard/$WG_INTERFACE.conf"
     
     # Agent 配置
     cat > "$CONFIG_DIR/agent_config.yaml" << EOF
@@ -907,7 +937,18 @@ logging:
 EOF
     fi
     
+    # 验证配置文件已生成
+    if [ ! -f /etc/wireguard/$WG_INTERFACE.conf ]; then
+        log_error "WireGuard 配置文件生成失败"
+    fi
+    
+    if [ ! -f "$CONFIG_DIR/agent_config.yaml" ]; then
+        log_error "Agent 配置文件生成失败"
+    fi
+    
     log_success "配置文件生成完成"
+    log_info "WireGuard 配置: /etc/wireguard/$WG_INTERFACE.conf"
+    log_info "Agent 配置: $CONFIG_DIR/agent_config.yaml"
 }
 
 install_services() {
