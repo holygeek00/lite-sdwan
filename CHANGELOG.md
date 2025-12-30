@@ -5,6 +5,32 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.0] - 2024-12-31
+
+### ✨ 新功能
+
+- **结构化日志**: JSON 格式日志输出，支持 DEBUG/INFO/WARN/ERROR 级别过滤
+- **配置验证**: 启动时验证 IP 地址、URL、端口、子网等配置项
+- **陈旧数据清理**: Controller 自动清理过期的遥测数据，保持内存使用稳定
+- **优雅关闭**: Agent 关闭时自动清理已添加的路由，保持路由表一致性
+- **增强健康检查**: 组件级别的健康状态，包含详细的诊断信息
+
+### 🔧 改进
+
+- 使用 `exec.CommandContext` 替代 `exec.Command`，支持命令超时
+- 添加集成测试覆盖 Agent-Controller 通信场景
+- 添加属性测试验证日志模块的正确性
+
+### 📦 新增文件
+
+- `pkg/logging/logger.go` - 结构化日志模块
+- `pkg/config/validator.go` - 配置验证模块
+- `internal/controller/cleaner.go` - 陈旧数据清理器
+- `internal/agent/health.go` - Agent 健康检查端点
+- `tests/integration/agent_controller_test.go` - 集成测试
+
+---
+
 ## [1.0.0] - 2024-12-29
 
 🎉 **首个正式版本发布！**
@@ -47,4 +73,5 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+[1.1.0]: https://github.com/holygeek00/lite-sdwan/releases/tag/v1.1.0
 [1.0.0]: https://github.com/holygeek00/lite-sdwan/releases/tag/v1.0.0
