@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# Lite SD-WAN 一键安装脚本 v2.0
+# Lite SD-WAN 一键安装脚本 v2.1
 #
 # 用法:
 #   curl -sSL https://raw.githubusercontent.com/holygeek00/lite-sdwan/main/deploy/install.sh | sudo bash
@@ -14,6 +14,8 @@
 #   --peers       对等节点列表，逗号分隔
 #   --skip-wg     跳过 WireGuard 配置
 #   --uninstall   卸载 SD-WAN
+#   --add-peer    添加对等节点
+#   --show-info   显示本节点信息
 #
 
 set -e
@@ -27,7 +29,7 @@ WG_INTERFACE="wg0"
 WG_PORT=51820
 WG_SUBNET="10.254.0.0/24"
 CONTROLLER_PORT=8000
-VERSION="2.0"
+VERSION="2.1"
 
 # 命令行参数
 ARG_ROLE=""
@@ -37,6 +39,9 @@ ARG_CONTROLLER=""
 ARG_PEERS=""
 ARG_SKIP_WG=false
 ARG_UNINSTALL=false
+ARG_ADD_PEER=false
+ARG_SHOW_INFO=false
+ARG_MANAGE=false
 
 # ============== 颜色 ==============
 RED='\033[0;31m'
@@ -86,6 +91,10 @@ usage() {
     echo ""
     echo "  # Agent 节点"
     echo "  sudo bash install.sh --role agent --wg-ip 10.254.0.2 --controller http://10.254.0.1:8000"
+    echo ""
+    echo "  # 管理已安装的节点"
+    echo "  sudo bash install.sh --add-peer    # 添加对等节点"
+    echo "  sudo bash install.sh --show-info   # 显示本节点信息"
     exit 0
 }
 
@@ -99,6 +108,8 @@ parse_args() {
             --peers) ARG_PEERS="$2"; shift 2 ;;
             --skip-wg) ARG_SKIP_WG=true; shift ;;
             --uninstall) ARG_UNINSTALL=true; shift ;;
+            --add-peer) ARG_ADD_PEER=true; shift ;;
+            --show-info) ARG_SHOW_INFO=true; shift ;;
             -h|--help) usage ;;
             *) shift ;;
         esac
@@ -171,6 +182,160 @@ uninstall() {
     exit 0
 }
 
+# 显示本节点信息
+show_node_info() {
+    if [ ! -f /etc/wireguard/publickey ]; then
+        log_error "未找到 WireGuard 配置，请先安装 SD-WAN"
+    fi
+    
+    local public_key=$(cat /etc/wireguard/publickey)
+    local wg_ip=$(grep -oP 'Address = \K[0-9.]+' /etc/wireguard/$WG_INTERFACE.conf 2>/dev/null || echo "未配置")
+    local public_ip=$(curl -s ifconfig.me 2>/dev/null || curl -s ip.sb 2>/dev/null || echo "未知")
+    
+    echo ""
+    echo -e "${CYAN}═══════════════════════════════════════════${NC}"
+    echo -e "${CYAN}  本节点信息${NC}"
+    echo -e "${CYAN}═══════════════════════════════════════════${NC}"
+    echo ""
+    echo "  WireGuard IP: $wg_ip"
+    echo "  公网 IP:      $public_ip"
+    echo "  公钥:         $public_key"
+    echo ""
+    echo -e "${YELLOW}  复制此行分享给其他节点:${NC}"
+    echo "  $wg_ip,$public_ip,$public_key"
+    echo ""
+    
+    # 显示当前对等节点
+    echo -e "${CYAN}当前对等节点:${NC}"
+    local peer_count=$(grep -c "^\[Peer\]" /etc/wireguard/$WG_INTERFACE.conf 2>/dev/null || echo "0")
+    if [ "$peer_count" = "0" ]; then
+        echo "  (无)"
+    else
+        grep -A3 "^\[Peer\]" /etc/wireguard/$WG_INTERFACE.conf 2>/dev/null | grep -E "(PublicKey|Endpoint|AllowedIPs)" | while read line; do
+            echo "  $line"
+        done
+    fi
+    echo ""
+}
+
+# 添加对等节点
+add_peer() {
+    if [ ! -f /etc/wireguard/$WG_INTERFACE.conf ]; then
+        log_error "未找到 WireGuard 配置，请先安装 SD-WAN"
+    fi
+    
+    echo ""
+    echo -e "${CYAN}添加对等节点${NC}"
+    echo "请输入对等节点信息 (格式: WG_IP,公网IP,公钥)"
+    echo "例如: 10.254.0.2,1.2.3.4,abc123def456..."
+    echo ""
+    
+    read -p "对等节点信息: " peer_info
+    
+    if [ -z "$peer_info" ]; then
+        log_error "输入不能为空"
+    fi
+    
+    # 解析输入
+    IFS=',' read -r peer_wg_ip peer_public_ip peer_pubkey <<< "$peer_info"
+    
+    if [ -z "$peer_wg_ip" ] || [ -z "$peer_public_ip" ] || [ -z "$peer_pubkey" ]; then
+        log_error "格式错误，请使用: WG_IP,公网IP,公钥"
+    fi
+    
+    # 检查是否已存在
+    if grep -q "$peer_pubkey" /etc/wireguard/$WG_INTERFACE.conf 2>/dev/null; then
+        log_warn "该对等节点已存在"
+        exit 0
+    fi
+    
+    # 添加到配置文件
+    cat >> /etc/wireguard/$WG_INTERFACE.conf << EOF
+
+[Peer]
+PublicKey = $peer_pubkey
+Endpoint = $peer_public_ip:$WG_PORT
+AllowedIPs = $peer_wg_ip/32
+PersistentKeepalive = 25
+EOF
+    
+    log_success "对等节点已添加到配置文件"
+    
+    # 添加到 agent 配置
+    if [ -f "$CONFIG_DIR/agent_config.yaml" ]; then
+        # 检查是否已存在
+        if ! grep -q "$peer_wg_ip" "$CONFIG_DIR/agent_config.yaml" 2>/dev/null; then
+            # 在 peer_ips 下添加
+            sed -i.bak "/peer_ips:/a\\    - \"$peer_wg_ip\"" "$CONFIG_DIR/agent_config.yaml" 2>/dev/null || \
+            sed -i '' "/peer_ips:/a\\
+    - \"$peer_wg_ip\"" "$CONFIG_DIR/agent_config.yaml"
+            log_success "已添加到 Agent 配置"
+        fi
+    fi
+    
+    # 重启 WireGuard
+    echo ""
+    read -p "是否立即重启 WireGuard 使配置生效? [Y/n]: " restart_wg
+    if [[ ! "$restart_wg" =~ ^[Nn] ]]; then
+        wg-quick down $WG_INTERFACE 2>/dev/null || true
+        wg-quick up $WG_INTERFACE
+        log_success "WireGuard 已重启"
+        
+        # 重启 Agent
+        if [ "$(uname -s)" = "Darwin" ]; then
+            launchctl stop com.sdwan.agent 2>/dev/null || true
+            launchctl start com.sdwan.agent 2>/dev/null || true
+        else
+            systemctl restart sdwan-agent 2>/dev/null || true
+        fi
+        log_success "Agent 已重启"
+    else
+        echo ""
+        echo "请手动重启 WireGuard:"
+        echo "  sudo wg-quick down $WG_INTERFACE && sudo wg-quick up $WG_INTERFACE"
+    fi
+    
+    echo ""
+    log_success "对等节点添加完成!"
+    exit 0
+}
+
+# 管理菜单
+manage_menu() {
+    echo ""
+    echo -e "${CYAN}═══════════════════════════════════════════${NC}"
+    echo -e "${CYAN}  SD-WAN 管理菜单${NC}"
+    echo -e "${CYAN}═══════════════════════════════════════════${NC}"
+    echo ""
+    echo "  1) 显示本节点信息"
+    echo "  2) 添加对等节点"
+    echo "  3) 查看 WireGuard 状态"
+    echo "  4) 重启服务"
+    echo "  5) 卸载"
+    echo "  6) 退出"
+    echo ""
+    
+    read -p "请选择 [1-6]: " choice
+    
+    case $choice in
+        1) show_node_info ;;
+        2) add_peer ;;
+        3) wg show ;;
+        4) 
+            if [ "$(uname -s)" = "Darwin" ]; then
+                launchctl stop com.sdwan.agent 2>/dev/null || true
+                launchctl start com.sdwan.agent 2>/dev/null || true
+            else
+                systemctl restart sdwan-agent 2>/dev/null || true
+            fi
+            log_success "服务已重启"
+            ;;
+        5) uninstall ;;
+        6) exit 0 ;;
+        *) log_error "无效选择" ;;
+    esac
+}
+
 detect_os() {
     UNAME_S=$(uname -s)
     case "$UNAME_S" in
@@ -222,21 +387,6 @@ detect_arch() {
             ;;
     esac
     log_info "系统架构: ${BOLD}$ARCH${NC} ($ARCH_SUFFIX)"
-}
-
-check_existing() {
-    if [ -f "$INSTALL_DIR/sdwan-agent" ]; then
-        log_warn "检测到已安装的 SD-WAN"
-        echo ""
-        echo "  1) 重新安装"
-        echo "  2) 卸载"
-        echo "  3) 退出"
-        read -p "选择 [1/2/3]: " choice
-        case $choice in
-            2) uninstall ;;
-            3) exit 0 ;;
-        esac
-    fi
 }
 
 install_deps() {
@@ -786,7 +936,7 @@ show_result() {
         echo "  AllowedIPs = <对方WG_IP>/32"
         echo "  PersistentKeepalive = 25"
         echo ""
-        echo "  然后重启 WireGuard: sudo wg-quick down $WG_INTERFACE && sudo wg-quick up $WG_INTERFACE"
+        echo "  或运行: sudo bash install.sh --add-peer"
         echo ""
     fi
     
@@ -811,6 +961,12 @@ show_result() {
             echo "  curl localhost:$CONTROLLER_PORT/health  # 健康检查"
         fi
     fi
+    
+    echo ""
+    echo -e "${CYAN}管理命令:${NC}"
+    echo "  再次运行此脚本可进入管理菜单"
+    echo "  sudo bash install.sh --add-peer   # 快速添加对等节点"
+    echo "  sudo bash install.sh --show-info  # 显示本节点信息"
     echo ""
 }
 
@@ -825,6 +981,23 @@ main() {
         uninstall
     fi
     
+    # 处理显示节点信息
+    if [ "$ARG_SHOW_INFO" = true ]; then
+        check_root
+        show_node_info
+        exit 0
+    fi
+    
+    # 处理添加对等节点
+    if [ "$ARG_ADD_PEER" = true ]; then
+        check_root
+        # 如果是管道模式，重定向 stdin
+        if [ ! -t 0 ] && [ -e /dev/tty ]; then
+            exec < /dev/tty
+        fi
+        add_peer
+    fi
+    
     print_banner
     check_root
     detect_os
@@ -835,9 +1008,11 @@ main() {
         exec < /dev/tty
     fi
     
-    # 非交互模式跳过已安装检查
-    if [ -z "$ARG_ROLE" ]; then
-        check_existing
+    # 检查是否已安装，显示管理菜单
+    if [ -z "$ARG_ROLE" ] && [ -f "$INSTALL_DIR/sdwan-agent" ]; then
+        log_info "检测到已安装的 SD-WAN"
+        manage_menu
+        exit 0
     fi
     
     install_deps
