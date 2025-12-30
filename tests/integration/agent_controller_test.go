@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+
 	"github.com/holygeek00/lite-sdwan/pkg/models"
 )
 
@@ -846,12 +847,12 @@ func TestRouteUpdateSequence(t *testing.T) {
 		t.Fatalf("Failed to get routes: %v", err)
 	}
 	var routeResp1 models.RouteResponse
-	if err := json.NewDecoder(resp1.Body).Decode(&routeResp1); err != nil {
-		t.Fatalf("Failed to decode routes: %v", err)
+	if decodeErr := json.NewDecoder(resp1.Body).Decode(&routeResp1); decodeErr != nil {
+		t.Fatalf("Failed to decode routes: %v", decodeErr)
 	}
 	_ = resp1.Body.Close()
-	if err := mockExecutor.SyncRoutes(routeResp1.Routes); err != nil {
-		t.Fatalf("Failed to sync routes: %v", err)
+	if syncErr := mockExecutor.SyncRoutes(routeResp1.Routes); syncErr != nil {
+		t.Fatalf("Failed to sync routes: %v", syncErr)
 	}
 
 	if len(mockExecutor.GetAppliedRoutes()) != 1 {
