@@ -535,33 +535,59 @@ install_deps() {
     
     case $OS in
         ubuntu|debian)
-            log_info "使用 apt 安装依赖..."
+            log_info "使用 apt 安装 WireGuard..."
             apt-get update -qq
-            apt-get install -y curl wget wireguard wireguard-tools
+            # Ubuntu/Debian: 直接安装 wireguard 包 (包含 module 和 tools)
+            apt-get install -y curl wget wireguard
             if [ $? -ne 0 ]; then
-                log_error "依赖安装失败，请检查网络连接或手动安装: apt install wireguard wireguard-tools"
+                log_error "WireGuard 安装失败，请检查网络连接或手动安装:
+  sudo apt update
+  sudo apt install wireguard"
             fi
             ;;
         centos|rhel|rocky|almalinux)
-            log_info "使用 yum 安装依赖..."
-            yum install -y epel-release || true
-            yum install -y curl wget wireguard-tools
+            log_info "使用 yum/dnf 安装 WireGuard..."
+            # 检测版本
+            local major_version=$(rpm -E %{rhel} 2>/dev/null || echo "8")
+            
+            if [ "$major_version" = "7" ]; then
+                # CentOS/RHEL 7: 使用 ELRepo
+                log_info "检测到 RHEL/CentOS 7，使用 ELRepo 安装..."
+                yum install -y https://www.elrepo.org/elrepo-release-7.el7.elrepo.noarch.rpm || true
+                yum install -y elrepo-release epel-release || true
+                yum install -y kmod-wireguard wireguard-tools
+            else
+                # CentOS/RHEL 8+: 使用 EPEL
+                log_info "检测到 RHEL/CentOS 8+，使用 EPEL 安装..."
+                dnf install -y epel-release || yum install -y epel-release || true
+                dnf install -y wireguard-tools || yum install -y wireguard-tools
+            fi
+            
             if [ $? -ne 0 ]; then
-                log_error "依赖安装失败，请检查网络连接或手动安装: yum install wireguard-tools"
+                log_error "WireGuard 安装失败，请参考官方指南: https://www.wireguard.com/install/"
             fi
             ;;
         fedora)
-            log_info "使用 dnf 安装依赖..."
+            log_info "使用 dnf 安装 WireGuard..."
+            # Fedora: 直接安装 wireguard-tools
             dnf install -y curl wget wireguard-tools
             if [ $? -ne 0 ]; then
-                log_error "依赖安装失败，请检查网络连接或手动安装: dnf install wireguard-tools"
+                log_error "WireGuard 安装失败，请手动运行: sudo dnf install wireguard-tools"
             fi
             ;;
         arch|manjaro)
-            log_info "使用 pacman 安装依赖..."
+            log_info "使用 pacman 安装 WireGuard..."
+            # Arch: 安装 wireguard-tools (kernel 5.6+ 已内置 module)
             pacman -Sy --noconfirm curl wget wireguard-tools
             if [ $? -ne 0 ]; then
-                log_error "依赖安装失败，请检查网络连接或手动安装: pacman -S wireguard-tools"
+                log_error "WireGuard 安装失败，请手动运行: sudo pacman -S wireguard-tools"
+            fi
+            ;;
+        alpine)
+            log_info "使用 apk 安装 WireGuard..."
+            apk add curl wget wireguard-tools
+            if [ $? -ne 0 ]; then
+                log_error "WireGuard 安装失败，请手动运行: sudo apk add wireguard-tools"
             fi
             ;;
         macos)
@@ -586,16 +612,17 @@ install_deps() {
             fi
             ;;
         *)
-            log_warn "未知系统，请确保已安装 curl, wget, wireguard-tools"
+            log_warn "未知系统 ($OS)，请确保已安装 wireguard-tools"
+            log_info "参考官方安装指南: https://www.wireguard.com/install/"
             ;;
     esac
     
     # 验证 wg 命令是否可用
     if ! command -v wg &> /dev/null; then
-        log_error "WireGuard 未正确安装，请手动安装 wireguard-tools 后重试"
+        log_error "WireGuard 未正确安装，请参考官方指南手动安装: https://www.wireguard.com/install/"
     fi
     
-    log_success "依赖安装完成"
+    log_success "WireGuard 安装完成"
 }
 
 get_latest_version() {
