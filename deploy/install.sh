@@ -761,11 +761,35 @@ show_result() {
     echo -e "${GREEN}║         安装完成！                     ║${NC}"
     echo -e "${GREEN}╚════════════════════════════════════════╝${NC}"
     echo ""
-    echo -e "${CYAN}本机信息:${NC}"
-    echo "  角色: $NODE_ROLE"
-    echo "  WireGuard IP: $NODE_WG_IP"
-    echo "  公钥: $public_key"
+    echo -e "${CYAN}═══════════════════════════════════════════${NC}"
+    echo -e "${CYAN}  本节点信息 (分享给其他节点)${NC}"
+    echo -e "${CYAN}═══════════════════════════════════════════${NC}"
     echo ""
+    echo "  WireGuard IP: $NODE_WG_IP"
+    echo "  公网 IP:      $NODE_PUBLIC_IP"
+    echo "  公钥:         $public_key"
+    echo ""
+    echo -e "${YELLOW}  复制此行分享给其他节点:${NC}"
+    echo "  $NODE_WG_IP,$NODE_PUBLIC_IP,$public_key"
+    echo ""
+    echo -e "${CYAN}═══════════════════════════════════════════${NC}"
+    echo ""
+    
+    # 如果没有配置对等节点，显示如何添加
+    if [ ${#PEERS[@]} -eq 0 ]; then
+        echo -e "${YELLOW}添加对等节点:${NC}"
+        echo "  编辑 /etc/wireguard/$WG_INTERFACE.conf，添加:"
+        echo ""
+        echo "  [Peer]"
+        echo "  PublicKey = <对方公钥>"
+        echo "  Endpoint = <对方公网IP>:$WG_PORT"
+        echo "  AllowedIPs = <对方WG_IP>/32"
+        echo "  PersistentKeepalive = 25"
+        echo ""
+        echo "  然后重启 WireGuard: sudo wg-quick down $WG_INTERFACE && sudo wg-quick up $WG_INTERFACE"
+        echo ""
+    fi
+    
     echo -e "${CYAN}常用命令:${NC}"
     echo "  wg show                           # 查看 WireGuard 状态"
     
@@ -787,10 +811,6 @@ show_result() {
             echo "  curl localhost:$CONTROLLER_PORT/health  # 健康检查"
         fi
     fi
-    
-    echo ""
-    echo -e "${YELLOW}分享给其他节点:${NC}"
-    echo "  $NODE_WG_IP,$NODE_PUBLIC_IP,$public_key"
     echo ""
 }
 
