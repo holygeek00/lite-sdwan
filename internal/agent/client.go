@@ -6,10 +6,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"time"
 
+	"github.com/holygeek00/lite-sdwan/pkg/logging"
 	"github.com/holygeek00/lite-sdwan/pkg/models"
 )
 
@@ -133,14 +133,24 @@ type RetryClient struct {
 	backoffSecs  []int
 	failureCount int
 	inFallback   bool
+	logger       logging.Logger
 }
 
 // NewRetryClient 创建带重试的客户端
 func NewRetryClient(baseURL string, timeout time.Duration, maxRetries int, backoffSecs []int) *RetryClient {
+	return NewRetryClientWithLogger(baseURL, timeout, maxRetries, backoffSecs, nil)
+}
+
+// NewRetryClientWithLogger 创建带重试的客户端，使用指定的 Logger
+func NewRetryClientWithLogger(baseURL string, timeout time.Duration, maxRetries int, backoffSecs []int, logger logging.Logger) *RetryClient {
+	if logger == nil {
+		logger = logging.NewNopLogger()
+	}
 	return &RetryClient{
 		client:      NewClient(baseURL, timeout),
 		maxRetries:  maxRetries,
 		backoffSecs: backoffSecs,
+		logger:      logger,
 	}
 }
 
@@ -151,7 +161,11 @@ func (rc *RetryClient) SendTelemetryWithRetry(req *models.TelemetryRequest) erro
 	for attempt := 0; attempt <= rc.maxRetries; attempt++ {
 		if attempt > 0 {
 			backoff := rc.backoffSecs[min(attempt-1, len(rc.backoffSecs)-1)]
-			log.Printf("Retrying telemetry in %d seconds (attempt %d/%d)", backoff, attempt, rc.maxRetries)
+			rc.logger.Info("Retrying telemetry",
+				logging.F("backoff_secs", backoff),
+				logging.F("attempt", attempt),
+				logging.F("max_retries", rc.maxRetries),
+			)
 			time.Sleep(time.Duration(backoff) * time.Second)
 		}
 
@@ -159,14 +173,17 @@ func (rc *RetryClient) SendTelemetryWithRetry(req *models.TelemetryRequest) erro
 		if err == nil {
 			rc.failureCount = 0
 			if rc.inFallback {
-				log.Printf("Controller recovered, exiting fallback mode")
+				rc.logger.Info("Controller recovered, exiting fallback mode")
 				rc.inFallback = false
 			}
 			return nil
 		}
 
 		lastErr = err
-		log.Printf("Telemetry send failed: %v", err)
+		rc.logger.Error("Telemetry send failed",
+			logging.F("error", err.Error()),
+			logging.F("attempt", attempt),
+		)
 	}
 
 	rc.failureCount++
@@ -180,7 +197,11 @@ func (rc *RetryClient) GetRoutesWithRetry(agentID string) (*models.RouteResponse
 	for attempt := 0; attempt <= rc.maxRetries; attempt++ {
 		if attempt > 0 {
 			backoff := rc.backoffSecs[min(attempt-1, len(rc.backoffSecs)-1)]
-			log.Printf("Retrying get routes in %d seconds (attempt %d/%d)", backoff, attempt, rc.maxRetries)
+			rc.logger.Info("Retrying get routes",
+				logging.F("backoff_secs", backoff),
+				logging.F("attempt", attempt),
+				logging.F("max_retries", rc.maxRetries),
+			)
 			time.Sleep(time.Duration(backoff) * time.Second)
 		}
 
@@ -188,14 +209,17 @@ func (rc *RetryClient) GetRoutesWithRetry(agentID string) (*models.RouteResponse
 		if err == nil {
 			rc.failureCount = 0
 			if rc.inFallback {
-				log.Printf("Controller recovered, exiting fallback mode")
+				rc.logger.Info("Controller recovered, exiting fallback mode")
 				rc.inFallback = false
 			}
 			return routes, nil
 		}
 
 		lastErr = err
-		log.Printf("Get routes failed: %v", err)
+		rc.logger.Error("Get routes failed",
+			logging.F("error", err.Error()),
+			logging.F("attempt", attempt),
+		)
 	}
 
 	rc.failureCount++
@@ -210,7 +234,9 @@ func (rc *RetryClient) ShouldEnterFallback() bool {
 // EnterFallback 进入 fallback 模式
 func (rc *RetryClient) EnterFallback() {
 	rc.inFallback = true
-	log.Printf("Entering fallback mode after %d consecutive failures", rc.failureCount)
+	rc.logger.Warn("Entering fallback mode",
+		logging.F("consecutive_failures", rc.failureCount),
+	)
 }
 
 // IsInFallback 检查是否在 fallback 模式

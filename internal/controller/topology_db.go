@@ -104,3 +104,18 @@ func (db *TopologyDB) CleanStale(threshold time.Duration) int {
 	}
 	return count
 }
+
+// GetLastUpdateTime 获取最后更新时间
+func (db *TopologyDB) GetLastUpdateTime() *time.Time {
+	db.mu.RLock()
+	defer db.mu.RUnlock()
+
+	var lastUpdate *time.Time
+	for _, data := range db.data {
+		if lastUpdate == nil || data.Timestamp.After(*lastUpdate) {
+			t := data.Timestamp
+			lastUpdate = &t
+		}
+	}
+	return lastUpdate
+}

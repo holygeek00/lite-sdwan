@@ -376,6 +376,19 @@ interactive_setup() {
         return
     fi
     
+    # 检查是否为管道模式（stdin 不是终端）
+    if [ ! -t 0 ]; then
+        log_error "交互模式需要终端输入。请使用以下方式之一：
+        
+  1) 下载后执行:
+     curl -sSL <URL>/install.sh -o /tmp/install.sh
+     sudo bash /tmp/install.sh
+     
+  2) 非交互模式:
+     curl -sSL <URL>/install.sh | sudo bash -s -- --role controller --wg-ip 10.254.0.1
+     curl -sSL <URL>/install.sh | sudo bash -s -- --role agent --wg-ip 10.254.0.2 --controller http://10.254.0.1:8000"
+    fi
+    
     # 交互模式
     echo ""
     echo -e "${CYAN}========================================${NC}"

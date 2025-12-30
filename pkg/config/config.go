@@ -16,6 +16,7 @@ type AgentConfig struct {
 	Probe      ProbeConfig      `yaml:"probe"`
 	Sync       SyncConfig       `yaml:"sync"`
 	Network    NetworkConfig    `yaml:"network"`
+	Logging    LoggingConfig    `yaml:"logging"`
 }
 
 // ControllerClient Controller 客户端配置
@@ -78,7 +79,7 @@ type LoggingConfig struct {
 
 // LoadAgentConfig 从文件加载 Agent 配置
 func LoadAgentConfig(path string) (*AgentConfig, error) {
-	data, err := os.ReadFile(path)
+	data, err := os.ReadFile(path) // #nosec G304 -- config file path is trusted input
 	if err != nil {
 		return nil, fmt.Errorf("failed to read config file: %w", err)
 	}
@@ -116,16 +117,17 @@ func LoadAgentConfig(path string) (*AgentConfig, error) {
 	if cfg.Controller.Timeout == 0 {
 		cfg.Controller.Timeout = 5 * time.Second
 	}
+	if cfg.Network.PeerIPs == nil {
+		cfg.Network.PeerIPs = []string{}
+	}
+	if cfg.Logging.Level == "" {
+		cfg.Logging.Level = "INFO"
+	}
 
-	// 验证必填字段
-	if cfg.AgentID == "" {
-		return nil, fmt.Errorf("agent_id is required")
-	}
-	if cfg.Controller.URL == "" {
-		return nil, fmt.Errorf("controller.url is required")
-	}
-	if len(cfg.Network.PeerIPs) == 0 {
-		return nil, fmt.Errorf("network.peer_ips is required")
+	// 执行配置验证
+	validationErrors := ValidateAgentConfig(&cfg)
+	if len(validationErrors) > 0 {
+		return nil, fmt.Errorf("%s", FormatValidationErrors(validationErrors))
 	}
 
 	return &cfg, nil
@@ -133,7 +135,7 @@ func LoadAgentConfig(path string) (*AgentConfig, error) {
 
 // LoadControllerConfig 从文件加载 Controller 配置
 func LoadControllerConfig(path string) (*ControllerConfig, error) {
-	data, err := os.ReadFile(path)
+	data, err := os.ReadFile(path) // #nosec G304 -- config file path is trusted input
 	if err != nil {
 		return nil, fmt.Errorf("failed to read config file: %w", err)
 	}
@@ -161,6 +163,12 @@ func LoadControllerConfig(path string) (*ControllerConfig, error) {
 	}
 	if cfg.Logging.Level == "" {
 		cfg.Logging.Level = "INFO"
+	}
+
+	// 执行配置验证
+	validationErrors := ValidateControllerConfig(&cfg)
+	if len(validationErrors) > 0 {
+		return nil, fmt.Errorf("%s", FormatValidationErrors(validationErrors))
 	}
 
 	return &cfg, nil

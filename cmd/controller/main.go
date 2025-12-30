@@ -3,36 +3,46 @@ package main
 
 import (
 	"flag"
-	"log"
 	"os"
 
 	"github.com/holygeek00/lite-sdwan/internal/controller"
 	"github.com/holygeek00/lite-sdwan/pkg/config"
+	"github.com/holygeek00/lite-sdwan/pkg/logging"
 )
 
 func main() {
 	configPath := flag.String("config", "config/controller_config.yaml", "Path to config file")
 	flag.Parse()
 
-	// 设置日志格式
-	log.SetFlags(log.LstdFlags | log.Lshortfile)
-
 	// 加载配置
 	cfg, err := config.LoadControllerConfig(*configPath)
 	if err != nil {
-		log.Printf("Failed to load config: %v", err)
+		// 配置加载失败时使用默认 logger
+		logger := logging.NewJSONLogger(logging.ERROR, os.Stderr)
+		logger.Error("Failed to load config",
+			logging.F("error", err.Error()),
+			logging.F("config_path", *configPath),
+		)
 		os.Exit(1)
 	}
 
-	log.Printf("Starting SD-WAN Controller...")
-	log.Printf("Config: listen=%s:%d, penalty_factor=%.0f, hysteresis=%.2f",
-		cfg.Server.ListenAddress, cfg.Server.Port,
-		cfg.Algorithm.PenaltyFactor, cfg.Algorithm.Hysteresis)
+	// 从配置创建 Logger
+	logger := logging.NewJSONLoggerFromString(cfg.Logging.Level, os.Stdout)
+
+	logger.Info("Starting SD-WAN Controller",
+		logging.F("listen_address", cfg.Server.ListenAddress),
+		logging.F("port", cfg.Server.Port),
+		logging.F("penalty_factor", cfg.Algorithm.PenaltyFactor),
+		logging.F("hysteresis", cfg.Algorithm.Hysteresis),
+		logging.F("log_level", cfg.Logging.Level),
+	)
 
 	// 创建并启动服务器
 	server := controller.NewServer(cfg)
 	if err := server.Run(); err != nil {
-		log.Printf("Server error: %v", err)
+		logger.Error("Server error",
+			logging.F("error", err.Error()),
+		)
 		os.Exit(1)
 	}
 }

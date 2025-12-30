@@ -97,3 +97,65 @@ func (m *Metric) Validate() error {
 	}
 	return nil
 }
+
+// HealthStatus 健康状态常量
+const (
+	HealthStatusHealthy   = "healthy"
+	HealthStatusDegraded  = "degraded"
+	HealthStatusUnhealthy = "unhealthy"
+)
+
+// DetailedHealthResponse 详细健康响应
+type DetailedHealthResponse struct {
+	Status     string                     `json:"status"`
+	Version    string                     `json:"version,omitempty"`
+	Uptime     string                     `json:"uptime,omitempty"`
+	Components map[string]ComponentHealth `json:"components"`
+	Timestamp  string                     `json:"timestamp"`
+}
+
+// ComponentHealth 组件健康状态
+type ComponentHealth struct {
+	Status    string                 `json:"status"`
+	Details   map[string]interface{} `json:"details,omitempty"`
+	LastCheck string                 `json:"last_check"`
+}
+
+// IsHealthy 检查整体健康状态
+func (d *DetailedHealthResponse) IsHealthy() bool {
+	for _, comp := range d.Components {
+		if comp.Status == HealthStatusUnhealthy {
+			return false
+		}
+	}
+	return true
+}
+
+// NewComponentHealth 创建健康的组件状态
+func NewComponentHealth(status string) ComponentHealth {
+	return ComponentHealth{
+		Status:    status,
+		Details:   make(map[string]interface{}),
+		LastCheck: time.Now().Format(time.RFC3339),
+	}
+}
+
+// NewDetailedHealthResponse 创建详细健康响应
+func NewDetailedHealthResponse() *DetailedHealthResponse {
+	return &DetailedHealthResponse{
+		Status:     HealthStatusHealthy,
+		Components: make(map[string]ComponentHealth),
+		Timestamp:  time.Now().Format(time.RFC3339),
+	}
+}
+
+// AddComponent 添加组件健康状态
+func (d *DetailedHealthResponse) AddComponent(name string, health ComponentHealth) {
+	d.Components[name] = health
+	// 更新整体状态
+	if health.Status == HealthStatusUnhealthy {
+		d.Status = HealthStatusUnhealthy
+	} else if health.Status == HealthStatusDegraded && d.Status == HealthStatusHealthy {
+		d.Status = HealthStatusDegraded
+	}
+}

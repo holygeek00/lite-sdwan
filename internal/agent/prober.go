@@ -2,12 +2,12 @@
 package agent
 
 import (
-	"log"
 	"sync"
 	"time"
 
 	probing "github.com/go-ping/ping"
 
+	"github.com/holygeek00/lite-sdwan/pkg/logging"
 	"github.com/holygeek00/lite-sdwan/pkg/models"
 )
 
@@ -17,6 +17,7 @@ type Prober struct {
 	interval   time.Duration
 	timeout    time.Duration
 	windowSize int
+	logger     logging.Logger
 
 	mu      sync.RWMutex
 	buffers map[string]*SlidingWindow // target_ip -> measurements
@@ -92,6 +93,15 @@ func (sw *SlidingWindow) Len() int {
 
 // NewProber 创建新的探测器
 func NewProber(peerIPs []string, interval, timeout time.Duration, windowSize int) *Prober {
+	return NewProberWithLogger(peerIPs, interval, timeout, windowSize, nil)
+}
+
+// NewProberWithLogger 创建新的探测器，使用指定的 Logger
+func NewProberWithLogger(peerIPs []string, interval, timeout time.Duration, windowSize int, logger logging.Logger) *Prober {
+	if logger == nil {
+		logger = logging.NewNopLogger()
+	}
+
 	buffers := make(map[string]*SlidingWindow)
 	for _, ip := range peerIPs {
 		buffers[ip] = NewSlidingWindow(windowSize)
@@ -103,6 +113,7 @@ func NewProber(peerIPs []string, interval, timeout time.Duration, windowSize int
 		timeout:    timeout,
 		windowSize: windowSize,
 		buffers:    buffers,
+		logger:     logger,
 		stopCh:     make(chan struct{}),
 	}
 }
@@ -111,7 +122,10 @@ func NewProber(peerIPs []string, interval, timeout time.Duration, windowSize int
 func (p *Prober) ProbeOnce(targetIP string) Measurement {
 	pinger, err := probing.NewPinger(targetIP)
 	if err != nil {
-		log.Printf("Failed to create pinger for %s: %v", targetIP, err)
+		p.logger.Error("Failed to create pinger",
+			logging.F("target_ip", targetIP),
+			logging.F("error", err.Error()),
+		)
 		return Measurement{RTTMs: nil, LossRate: 1.0, Time: time.Now()}
 	}
 
@@ -121,7 +135,10 @@ func (p *Prober) ProbeOnce(targetIP string) Measurement {
 
 	err = pinger.Run()
 	if err != nil {
-		log.Printf("Ping failed for %s: %v", targetIP, err)
+		p.logger.Error("Ping failed",
+			logging.F("target_ip", targetIP),
+			logging.F("error", err.Error()),
+		)
 		return Measurement{RTTMs: nil, LossRate: 1.0, Time: time.Now()}
 	}
 
@@ -184,9 +201,15 @@ func (p *Prober) probeAll() {
 		p.mu.Unlock()
 
 		if m.RTTMs != nil {
-			log.Printf("Probe %s: RTT=%.2fms, Loss=%.1f%%", ip, *m.RTTMs, m.LossRate*100)
+			p.logger.Debug("Probe result",
+				logging.F("target_ip", ip),
+				logging.F("rtt_ms", *m.RTTMs),
+				logging.F("loss_rate", m.LossRate*100),
+			)
 		} else {
-			log.Printf("Probe %s: timeout", ip)
+			p.logger.Debug("Probe timeout",
+				logging.F("target_ip", ip),
+			)
 		}
 	}
 }
@@ -248,4 +271,54 @@ func (p *Prober) GetRawMetrics() []models.Metric {
 	}
 
 	return metrics
+}
+
+// GetLastProbeTime 获取最后探测时间
+func (p *Prober) GetLastProbeTime() *time.Time {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+
+	var lastTime *time.Time
+	for _, sw := range p.buffers {
+		if sw.count == 0 {
+			continue
+		}
+		idx := (sw.position - 1 + sw.maxSize) % sw.maxSize
+		m := sw.data[idx]
+		if lastTime == nil || m.Time.After(*lastTime) {
+			t := m.Time
+			lastTime = &t
+		}
+	}
+	return lastTime
+}
+
+// GetSuccessRate 获取探测成功率
+func (p *Prober) GetSuccessRate() float64 {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+
+	var totalMeasurements int
+	var successfulMeasurements int
+
+	for _, sw := range p.buffers {
+		for i := 0; i < sw.count; i++ {
+			totalMeasurements++
+			if sw.data[i].RTTMs != nil {
+				successfulMeasurements++
+			}
+		}
+	}
+
+	if totalMeasurements == 0 {
+		return 0
+	}
+	return float64(successfulMeasurements) / float64(totalMeasurements)
+}
+
+// IsRunning 检查探测器是否运行中
+func (p *Prober) IsRunning() bool {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	return p.running
 }

@@ -1,33 +1,51 @@
 package agent
 
 import (
+	"context"
 	"fmt"
-	"log"
 	"net"
 	"os/exec"
 	"strings"
 	"sync"
+	"time"
 
+	"github.com/holygeek00/lite-sdwan/pkg/logging"
 	"github.com/holygeek00/lite-sdwan/pkg/models"
 )
 
+// commandTimeout is the default timeout for route commands
+const commandTimeout = 10 * time.Second
+
 // Executor 路由执行器
 type Executor struct {
-	wgInterface string
-	subnet      *net.IPNet
-	mu          sync.Mutex
+	wgInterface   string
+	subnet        *net.IPNet
+	mu            sync.Mutex
+	managedRoutes map[string]string // dst -> nextHop, 记录由 Agent 管理的路由
+	logger        logging.Logger
 }
 
 // NewExecutor 创建新的路由执行器
 func NewExecutor(wgInterface, subnet string) (*Executor, error) {
+	return NewExecutorWithLogger(wgInterface, subnet, nil)
+}
+
+// NewExecutorWithLogger 创建新的路由执行器，使用指定的 Logger
+func NewExecutorWithLogger(wgInterface, subnet string, logger logging.Logger) (*Executor, error) {
+	if logger == nil {
+		logger = logging.NewNopLogger()
+	}
+
 	_, ipNet, err := net.ParseCIDR(subnet)
 	if err != nil {
 		return nil, fmt.Errorf("invalid subnet: %w", err)
 	}
 
 	return &Executor{
-		wgInterface: wgInterface,
-		subnet:      ipNet,
+		wgInterface:   wgInterface,
+		subnet:        ipNet,
+		managedRoutes: make(map[string]string),
+		logger:        logger,
 	}, nil
 }
 
@@ -42,7 +60,10 @@ func (e *Executor) GetCurrentRoutes() ([]CurrentRoute, error) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
-	cmd := exec.Command("ip", "route", "show", "table", "main")
+	ctx, cancel := context.WithTimeout(context.Background(), commandTimeout)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, "ip", "route", "show", "table", "main")
 	output, err := cmd.Output()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get routes: %w", err)
@@ -146,25 +167,44 @@ func (e *Executor) ApplyRoute(route models.RouteConfig) error {
 	if route.NextHop == "direct" {
 		// 删除中继路由，恢复直连
 		args = e.GenerateDelCommand(dstIP)
-		log.Printf("Removing relay route: %s", strings.Join(args, " "))
+		e.logger.Info("Removing relay route",
+			logging.F("command", strings.Join(args, " ")),
+			logging.F("dst_ip", dstIP),
+		)
 	} else {
 		// 添加/替换中继路由
 		if !e.ValidateIP(route.NextHop) {
 			return fmt.Errorf("next_hop %s is not in allowed subnet %s", route.NextHop, e.subnet.String())
 		}
 		args = e.GenerateAddCommand(dstIP, route.NextHop)
-		log.Printf("Adding relay route: %s", strings.Join(args, " "))
+		e.logger.Info("Adding relay route",
+			logging.F("command", strings.Join(args, " ")),
+			logging.F("dst_ip", dstIP),
+			logging.F("next_hop", route.NextHop),
+		)
 	}
 
 	// #nosec G204 - args are validated above via ValidateIP
-	cmd := exec.Command(args[0], args[1:]...) //nolint:gosec
+	ctx, cancel := context.WithTimeout(context.Background(), commandTimeout)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, args[0], args[1:]...) //nolint:gosec
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		// 删除不存在的路由不算错误
 		if route.NextHop == "direct" && strings.Contains(string(output), "No such process") {
+			// 从 managedRoutes 中移除
+			delete(e.managedRoutes, route.DstCIDR)
 			return nil
 		}
 		return fmt.Errorf("route command failed: %s, output: %s", err, string(output))
+	}
+
+	// 更新 managedRoutes
+	if route.NextHop == "direct" {
+		delete(e.managedRoutes, route.DstCIDR)
+	} else {
+		e.managedRoutes[route.DstCIDR] = route.NextHop
 	}
 
 	return nil
@@ -174,7 +214,10 @@ func (e *Executor) ApplyRoute(route models.RouteConfig) error {
 func (e *Executor) SyncRoutes(desired []models.RouteConfig) error {
 	for _, route := range desired {
 		if err := e.ApplyRoute(route); err != nil {
-			log.Printf("Failed to apply route %s: %v", route.DstCIDR, err)
+			e.logger.Error("Failed to apply route",
+				logging.F("dst_cidr", route.DstCIDR),
+				logging.F("error", err.Error()),
+			)
 			// 继续处理其他路由
 		}
 	}
@@ -186,10 +229,15 @@ func (e *Executor) FlushRoutes() error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
-	log.Printf("Flushing all dynamic routes for %s", e.wgInterface)
+	e.logger.Info("Flushing all dynamic routes",
+		logging.F("interface", e.wgInterface),
+	)
 
 	// 获取当前路由
-	cmd := exec.Command("ip", "route", "show", "table", "main")
+	ctx, cancel := context.WithTimeout(context.Background(), commandTimeout)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, "ip", "route", "show", "table", "main")
 	output, err := cmd.Output()
 	if err != nil {
 		return fmt.Errorf("failed to get routes: %w", err)
@@ -218,12 +266,19 @@ func (e *Executor) FlushRoutes() error {
 		}
 
 		// 删除路由
-		delCmd := exec.Command("ip", "route", "del", dst, "dev", e.wgInterface) //nolint:gosec
+		delCtx, delCancel := context.WithTimeout(context.Background(), commandTimeout)
+		delCmd := exec.CommandContext(delCtx, "ip", "route", "del", dst, "dev", e.wgInterface) //nolint:gosec
 		if delErr := delCmd.Run(); delErr != nil {
-			log.Printf("Failed to delete route %s: %v", dst, delErr)
+			e.logger.Error("Failed to delete route",
+				logging.F("dst", dst),
+				logging.F("error", delErr.Error()),
+			)
 		} else {
-			log.Printf("Deleted route: %s", dst)
+			e.logger.Info("Deleted route",
+				logging.F("dst", dst),
+			)
 		}
+		delCancel()
 	}
 
 	return nil
@@ -270,4 +325,63 @@ func CalculateDiff(current []CurrentRoute, desired []models.RouteConfig) (toAdd,
 	}
 
 	return toAdd, toRemove
+}
+
+// GetManagedRoutes 获取当前管理的路由列表
+func (e *Executor) GetManagedRoutes() map[string]string {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	// 返回副本以避免并发问题
+	result := make(map[string]string, len(e.managedRoutes))
+	for k, v := range e.managedRoutes {
+		result[k] = v
+	}
+	return result
+}
+
+// CleanupManagedRoutes 清理所有由 Agent 管理的路由
+// 返回清理的路由数量和遇到的错误列表
+func (e *Executor) CleanupManagedRoutes() (int, []error) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	var errors []error
+	cleaned := 0
+
+	for dst := range e.managedRoutes {
+		dstIP := strings.TrimSuffix(dst, "/32")
+		args := e.GenerateDelCommand(dstIP)
+
+		e.logger.Info("Cleaning up managed route",
+			logging.F("command", strings.Join(args, " ")),
+			logging.F("dst", dst),
+		)
+
+		// #nosec G204 - args are generated internally
+		ctx, cancel := context.WithTimeout(context.Background(), commandTimeout)
+		cmd := exec.CommandContext(ctx, args[0], args[1:]...) //nolint:gosec
+		output, err := cmd.CombinedOutput()
+		cancel()
+		if err != nil {
+			// 路由不存在不算错误
+			if !strings.Contains(string(output), "No such process") {
+				errors = append(errors, fmt.Errorf("failed to delete route %s: %s, output: %s", dst, err, string(output)))
+				continue
+			}
+		}
+		cleaned++
+	}
+
+	// 清空 managedRoutes
+	e.managedRoutes = make(map[string]string)
+
+	return cleaned, errors
+}
+
+// ManagedRouteCount 返回当前管理的路由数量
+func (e *Executor) ManagedRouteCount() int {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return len(e.managedRoutes)
 }
