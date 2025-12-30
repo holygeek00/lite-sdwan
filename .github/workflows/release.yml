@@ -14,6 +14,11 @@ on:
 env:
   GO_VERSION: '1.21'
 
+# 全局权限声明
+permissions:
+  contents: write
+  packages: write
+
 jobs:
   build:
     name: Build
@@ -147,46 +152,77 @@ jobs:
 
       - name: Generate release notes
         run: |
-          cat > RELEASE_NOTES.md << 'EOF'
-          ## Lite SD-WAN ${{ steps.version.outputs.VERSION }}
+          VERSION=${{ steps.version.outputs.VERSION }}
+          cat > RELEASE_NOTES.md << EOF
+          ## Lite SD-WAN ${VERSION}
           
-          ### Downloads
+          轻量级 SD-WAN 智能路由系统，基于 WireGuard 实现多节点组网和智能路由选择。
           
-          | Platform | Architecture | Download |
-          |----------|--------------|----------|
-          | Linux | amd64 | `lite-sdwan-linux-amd64.tar.gz` |
-          | Linux | arm64 | `lite-sdwan-linux-arm64.tar.gz` |
-          | Linux | armv7 | `lite-sdwan-linux-armv7.tar.gz` |
-          | macOS | amd64 (Intel) | `lite-sdwan-darwin-amd64.tar.gz` |
-          | macOS | arm64 (Apple Silicon) | `lite-sdwan-darwin-arm64.tar.gz` |
-          | Windows | amd64 | `lite-sdwan-windows-amd64.zip` |
+          ### 🚀 一键安装 (推荐)
           
-          ### Quick Install (Linux)
+          \`\`\`bash
+          curl -sSL https://raw.githubusercontent.com/holygeek00/lite-sdwan/main/deploy/install.sh | sudo bash
+          \`\`\`
           
-          ```bash
-          # Download and extract
-          curl -LO https://github.com/holygeek00/lite-sdwan/releases/download/${{ steps.version.outputs.VERSION }}/lite-sdwan-linux-amd64.tar.gz
+          或者非交互模式：
+          \`\`\`bash
+          # Controller 节点
+          curl -sSL .../install.sh | sudo bash -s -- --role controller --wg-ip 10.254.0.1
+          
+          # Agent 节点
+          curl -sSL .../install.sh | sudo bash -s -- --role agent --wg-ip 10.254.0.2 --controller http://10.254.0.1:8000
+          \`\`\`
+          
+          ### 📦 下载
+          
+          | 平台 | 架构 | 下载 |
+          |------|------|------|
+          | Linux | amd64 | \`lite-sdwan-linux-amd64.tar.gz\` |
+          | Linux | arm64 | \`lite-sdwan-linux-arm64.tar.gz\` |
+          | Linux | armv7 | \`lite-sdwan-linux-armv7.tar.gz\` |
+          | macOS | Intel | \`lite-sdwan-darwin-amd64.tar.gz\` |
+          | macOS | Apple Silicon | \`lite-sdwan-darwin-arm64.tar.gz\` |
+          | Windows | amd64 | \`lite-sdwan-windows-amd64.zip\` |
+          
+          ### 🐳 Docker
+          
+          \`\`\`bash
+          # Controller
+          docker pull ghcr.io/holygeek00/lite-sdwan/controller:${VERSION}
+          
+          # Agent
+          docker pull ghcr.io/holygeek00/lite-sdwan/agent:${VERSION}
+          \`\`\`
+          
+          ### 📝 手动安装
+          
+          \`\`\`bash
+          # 下载并解压
+          curl -LO https://github.com/holygeek00/lite-sdwan/releases/download/${VERSION}/lite-sdwan-linux-amd64.tar.gz
           tar -xzf lite-sdwan-linux-amd64.tar.gz
           
-          # Install
+          # 安装
           sudo mv sdwan-controller-linux-amd64 /usr/local/bin/sdwan-controller
           sudo mv sdwan-agent-linux-amd64 /usr/local/bin/sdwan-agent
-          ```
+          sudo chmod +x /usr/local/bin/sdwan-*
+          \`\`\`
           
-          ### Verify Checksums
+          ### ✅ 校验
           
-          ```bash
+          \`\`\`bash
           sha256sum -c sdwan-controller-linux-amd64.sha256
           sha256sum -c sdwan-agent-linux-amd64.sha256
-          ```
+          \`\`\`
           
-          ### What's Changed
+          ### 📖 文档
           
-          See [CHANGELOG.md](https://github.com/holygeek00/lite-sdwan/blob/main/CHANGELOG.md) for details.
+          - [部署指南](https://github.com/holygeek00/lite-sdwan/blob/main/DEPLOYMENT_GUIDE.md)
+          - [WireGuard 配置](https://github.com/holygeek00/lite-sdwan/blob/main/WIREGUARD_GUIDE.md)
+          - [更新日志](https://github.com/holygeek00/lite-sdwan/blob/main/CHANGELOG.md)
           EOF
 
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v2
         with:
           name: Lite SD-WAN ${{ steps.version.outputs.VERSION }}
           body_path: RELEASE_NOTES.md
@@ -216,6 +252,11 @@ jobs:
         with:
           name: binaries-linux-amd64
           path: artifacts
+
+      - name: Prepare binaries
+        run: |
+          chmod +x artifacts/sdwan-controller-linux-amd64
+          chmod +x artifacts/sdwan-agent-linux-amd64
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
