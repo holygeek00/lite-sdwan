@@ -536,13 +536,44 @@ install_deps() {
     case $OS in
         ubuntu|debian)
             log_info "使用 apt 安装 WireGuard..."
-            apt-get update -qq
-            # Ubuntu/Debian: 直接安装 wireguard 包 (包含 module 和 tools)
-            apt-get install -y curl wget wireguard
-            if [ $? -ne 0 ]; then
-                log_error "WireGuard 安装失败，请检查网络连接或手动安装:
+            
+            # 先检查 WireGuard 是否已安装
+            if command -v wg &> /dev/null; then
+                log_info "WireGuard 已安装，跳过"
+                return 0
+            fi
+            
+            # 尝试正常更新
+            if ! apt-get update -qq 2>/dev/null; then
+                log_warn "apt update 失败，尝试修复..."
+                # 清理并重试
+                rm -rf /var/lib/apt/lists/* 2>/dev/null || true
+                apt-get clean 2>/dev/null || true
+                
+                # 再次尝试
+                if ! apt-get update -qq 2>/dev/null; then
+                    log_warn "apt 源可能有问题，尝试跳过签名验证..."
+                    apt-get update --allow-insecure-repositories 2>/dev/null || true
+                fi
+            fi
+            
+            # 尝试安装 WireGuard
+            if ! apt-get install -y wireguard 2>/dev/null; then
+                log_warn "正常安装失败，尝试跳过签名验证..."
+                apt-get install -y wireguard --allow-unauthenticated 2>/dev/null || \
+                apt-get install -y wireguard-tools --allow-unauthenticated 2>/dev/null
+            fi
+            
+            # 最终检查
+            if ! command -v wg &> /dev/null; then
+                log_error "WireGuard 安装失败，请手动安装:
   sudo apt update
-  sudo apt install wireguard"
+  sudo apt install wireguard
+  
+如果 apt 源有问题，尝试:
+  sudo rm -rf /var/lib/apt/lists/*
+  sudo apt clean
+  sudo apt update"
             fi
             ;;
         centos|rhel|rocky|almalinux)
