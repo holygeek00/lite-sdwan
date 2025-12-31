@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# Lite SD-WAN 一键安装脚本 v2.2
+# Lite SD-WAN 一键安装脚本 v2.3
 #
 # 用法:
 #   curl -sSL https://raw.githubusercontent.com/holygeek00/lite-sdwan/main/deploy/install.sh | sudo bash
@@ -18,7 +18,7 @@
 #   --show-info   显示本节点信息
 #
 
-set -e
+# 不使用 set -e，手动处理错误
 
 # ============== 配置 ==============
 GITHUB_REPO="holygeek00/lite-sdwan"
@@ -29,7 +29,7 @@ WG_INTERFACE="wg0"
 WG_PORT=51820
 WG_SUBNET="10.254.0.0/24"
 CONTROLLER_PORT=8000
-VERSION="2.2"
+VERSION="2.3"
 
 # 命令行参数
 ARG_ROLE=""
@@ -900,7 +900,11 @@ interactive_setup() {
     echo ""
     
     read -p "确认配置? [Y/n]: " confirm
-    [[ "$confirm" =~ ^[Nn] ]] && exit 0
+    if [[ "$confirm" =~ ^[Nn] ]]; then
+        log_warn "用户取消配置"
+        exit 0
+    fi
+    log_info "配置已确认，继续..."
 }
 
 generate_configs() {
