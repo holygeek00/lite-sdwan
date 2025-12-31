@@ -533,15 +533,15 @@ detect_arch() {
 install_deps() {
     log_step "安装系统依赖..."
     
+    # 先检查 WireGuard 是否已安装
+    if command -v wg &> /dev/null; then
+        log_success "WireGuard 已安装，跳过"
+        return 0
+    fi
+    
     case $OS in
         ubuntu|debian)
             log_info "使用 apt 安装 WireGuard..."
-            
-            # 先检查 WireGuard 是否已安装
-            if command -v wg &> /dev/null; then
-                log_info "WireGuard 已安装，跳过"
-                return 0
-            fi
             
             # 尝试正常更新
             if ! apt-get update -qq 2>/dev/null; then
