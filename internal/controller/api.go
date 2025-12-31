@@ -63,6 +63,7 @@ func (s *Server) setupRoutes() {
 	{
 		v1.POST("/telemetry", s.handleTelemetry)
 		v1.GET("/routes", s.handleGetRoutes)
+		v1.GET("/topology", s.handleTopology)
 	}
 
 	// 健康检查
@@ -172,6 +173,56 @@ func (s *Server) handleHealth(c *gin.Context) {
 	} else {
 		c.JSON(http.StatusServiceUnavailable, resp)
 	}
+}
+
+// TopologyNode 拓扑节点信息
+type TopologyNode struct {
+	AgentID     string            `json:"agent_id"`
+	LastSeen    string            `json:"last_seen"`
+	Peers       map[string]Metric `json:"peers"`
+}
+
+// Metric 指标信息
+type Metric struct {
+	RTT  float64 `json:"rtt_ms"`
+	Loss float64 `json:"loss_rate"`
+}
+
+// TopologyResponse 拓扑响应
+type TopologyResponse struct {
+	NodeCount int            `json:"node_count"`
+	Nodes     []TopologyNode `json:"nodes"`
+}
+
+// handleTopology 处理拓扑查询
+func (s *Server) handleTopology(c *gin.Context) {
+	allData := s.db.GetAll()
+	
+	nodes := make([]TopologyNode, 0, len(allData))
+	for agentID, data := range allData {
+		peers := make(map[string]Metric)
+		for targetIP, metric := range data.Metrics {
+			rtt := 0.0
+			if metric.RTT != nil {
+				rtt = *metric.RTT
+			}
+			peers[targetIP] = Metric{
+				RTT:  rtt,
+				Loss: metric.Loss,
+			}
+		}
+		
+		nodes = append(nodes, TopologyNode{
+			AgentID:  agentID,
+			LastSeen: data.Timestamp.Format(time.RFC3339),
+			Peers:    peers,
+		})
+	}
+	
+	c.JSON(http.StatusOK, TopologyResponse{
+		NodeCount: len(nodes),
+		Nodes:     nodes,
+	})
 }
 
 // Run 启动服务器
