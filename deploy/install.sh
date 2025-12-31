@@ -622,49 +622,18 @@ install_deps() {
             fi
             ;;
         macos)
-            # macOS: 使用 Homebrew (不能用 root 运行)
-            # 先检查 WireGuard 是否已安装
+            # macOS: 先检查 WireGuard 是否已安装
             if command -v wg &> /dev/null; then
                 log_info "WireGuard 已安装，跳过"
-                return 0
-            fi
-            
-            if ! command -v brew &> /dev/null; then
-                log_error "未检测到 Homebrew，请先安装: https://brew.sh
-                
-安装 Homebrew (不要用 sudo):
-  /bin/bash -c \"\$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)\"
-
-然后安装 WireGuard (不要用 sudo):
-  brew install wireguard-tools
-
-最后重新运行此脚本"
-            fi
-            
-            # Homebrew 不能用 root 运行
-            if [ "$EUID" -eq 0 ]; then
-                log_warn "Homebrew 不能以 root 身份运行"
+            else
+                # Homebrew 不能用 root 运行
+                log_warn "WireGuard 未安装"
                 echo ""
-                echo "请先以普通用户身份安装 WireGuard:"
+                echo "请以普通用户身份安装 WireGuard (不要用 sudo):"
                 echo "  brew install wireguard-tools"
                 echo ""
-                echo "然后重新运行此脚本"
-                echo ""
-                
-                # 检查是否已安装
-                if ! command -v wg &> /dev/null; then
-                    log_error "请先安装 WireGuard: brew install wireguard-tools"
-                fi
-            else
-                log_info "使用 Homebrew 安装 wireguard-tools..."
-                if ! brew list wireguard-tools &>/dev/null; then
-                    brew install wireguard-tools
-                    if [ $? -ne 0 ]; then
-                        log_error "WireGuard 安装失败，请手动运行: brew install wireguard-tools"
-                    fi
-                else
-                    log_info "wireguard-tools 已安装"
-                fi
+                echo "安装后重新运行此脚本"
+                log_error "请先安装 WireGuard"
             fi
             ;;
         *)
