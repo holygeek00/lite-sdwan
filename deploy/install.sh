@@ -422,20 +422,41 @@ manage_menu() {
             if ! command -v wg &> /dev/null; then
                 log_error "WireGuard 未安装"
             fi
-            if ! wg show $WG_INTERFACE &> /dev/null; then
-                log_warn "WireGuard 接口 $WG_INTERFACE 未启动"
-                echo ""
-                if [ -f /etc/wireguard/$WG_INTERFACE.conf ]; then
-                    echo "配置文件存在，尝试启动..."
-                    wg-quick up $WG_INTERFACE && log_success "WireGuard 已启动"
-                    echo ""
-                    wg show $WG_INTERFACE
+            
+            # macOS 上 WireGuard 使用 utun 接口
+            if [ "$(uname -s)" = "Darwin" ]; then
+                # 尝试直接显示所有 WireGuard 接口
+                if wg show &> /dev/null; then
+                    wg show
                 else
-                    echo "配置文件不存在: /etc/wireguard/$WG_INTERFACE.conf"
-                    echo "请先完成配置 (选项 0 或 5)"
+                    log_warn "WireGuard 未运行"
+                    echo ""
+                    if [ -f /etc/wireguard/$WG_INTERFACE.conf ]; then
+                        echo "配置文件存在，尝试启动..."
+                        wg-quick up $WG_INTERFACE 2>&1 || true
+                        sleep 1
+                        wg show
+                    else
+                        echo "配置文件不存在: /etc/wireguard/$WG_INTERFACE.conf"
+                    fi
                 fi
             else
-                wg show $WG_INTERFACE
+                # Linux
+                if ! wg show $WG_INTERFACE &> /dev/null; then
+                    log_warn "WireGuard 接口 $WG_INTERFACE 未启动"
+                    echo ""
+                    if [ -f /etc/wireguard/$WG_INTERFACE.conf ]; then
+                        echo "配置文件存在，尝试启动..."
+                        wg-quick up $WG_INTERFACE && log_success "WireGuard 已启动"
+                        echo ""
+                        wg show $WG_INTERFACE
+                    else
+                        echo "配置文件不存在: /etc/wireguard/$WG_INTERFACE.conf"
+                        echo "请先完成配置 (选项 0 或 5)"
+                    fi
+                else
+                    wg show $WG_INTERFACE
+                fi
             fi
             echo ""
             ;;
